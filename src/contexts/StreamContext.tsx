@@ -63,8 +63,13 @@ export function StreamProvider({ children }: { children: ReactNode }) {
   const [ws, setWs] = useState<WebSocket | null>(null);
 
   useEffect(() => {
+    // Get WebSocket URL based on current location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}`;
+    
     // Initialize WebSocket connection
-    const websocket = new WebSocket('ws://localhost:3001');
+    const websocket = new WebSocket(wsUrl);
     
     websocket.onopen = () => {
       console.log('Connected to streaming server');
@@ -92,6 +97,11 @@ export function StreamProvider({ children }: { children: ReactNode }) {
 
     websocket.onclose = () => {
       addLog('Disconnected from streaming server');
+    };
+
+    websocket.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      addLog('WebSocket connection error');
     };
 
     setWs(websocket);

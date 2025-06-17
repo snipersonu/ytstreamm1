@@ -33,7 +33,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Only serve static files in production
+// Always serve static files in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../dist')));
 }
@@ -205,7 +205,7 @@ streamManager.on('log', (message) => {
   });
 });
 
-// Only serve React app for all other routes in production
+// Always serve React app for all other routes in production
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '../dist/index.html'));
@@ -218,12 +218,13 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// Use port 3001 internally (will be mapped to 3000 by docker-compose)
 const PORT = process.env.PORT || 3001;
 
 // Log the final PORT value being used
 logger.info(`Final PORT value being used: ${PORT}`);
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on port ${PORT}`);
   console.log(`🚀 YouTube Livestream System running on http://localhost:${PORT}`);
 });
