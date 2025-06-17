@@ -19,6 +19,12 @@ const wss = new WebSocketServer({ server });
 
 // Initialize services
 const logger = new Logger();
+
+// Add debugging for PORT environment variable
+logger.info('Environment PORT value:', process.env.PORT);
+logger.info('Environment NODE_ENV value:', process.env.NODE_ENV);
+logger.info('All environment variables:', Object.keys(process.env).filter(key => key.includes('PORT')));
+
 const streamManager = new StreamManager(logger);
 const healthMonitor = new HealthMonitor(logger);
 
@@ -213,6 +219,9 @@ app.use((error, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3001;
+
+// Log the final PORT value being used
+logger.info('Final PORT value being used:', PORT);
 
 server.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
