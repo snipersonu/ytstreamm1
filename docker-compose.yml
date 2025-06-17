@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  youtube-livestream:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    volumes:
+      - ./server/uploads:/app/server/uploads
+      - ./server/logs:/app/server/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
