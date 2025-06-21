@@ -322,18 +322,44 @@ export class StreamManager extends EventEmitter {
           // Explicit stream mapping to ensure both video and audio are included
           '-map', '0:v:0',  // Map first video stream
           '-map', '0:a:0',  // Map first audio stream
-          '-preset', 'fast',
+          
+          // CPU Optimization: Use ultrafast preset for minimal CPU usage
+          '-preset', 'ultrafast',
+          
+          // Tune for zero latency streaming
           '-tune', 'zerolatency',
-          '-g', String(fps * 2), // Keyframe interval
-          '-keyint_min', String(fps),
-          '-sc_threshold', '0',
-          '-bufsize', String(bitrate * 2) + 'k',
+          
+          // Optimize GOP (Group of Pictures) settings for streaming
+          '-g', String(fps * 2), // Keyframe interval (2 seconds)
+          '-keyint_min', String(fps), // Minimum keyframe interval
+          '-sc_threshold', '0', // Disable scene change detection
+          
+          // Buffer settings optimized for streaming
+          '-bufsize', String(bitrate * 1.5) + 'k', // Reduced buffer size
           '-maxrate', bitrate + 'k',
+          
+          // Additional CPU optimizations
+          '-threads', '0', // Use all available CPU threads efficiently
+          '-slices', '1', // Single slice for better compression
+          '-refs', '1', // Reduce reference frames for faster encoding
+          '-me_method', 'hex', // Faster motion estimation
+          '-subq', '1', // Reduced subpixel motion estimation quality
+          '-trellis', '0', // Disable trellis quantization
+          '-aq-mode', '0', // Disable adaptive quantization
+          
+          // Profile and level settings for compatibility
+          '-profile:v', 'baseline', // Use baseline profile for better compatibility and speed
+          '-level', '3.1',
+          
+          // Pixel format
+          '-pix_fmt', 'yuv420p',
+          
+          // Output format
           '-f', 'flv'
         ])
         .output(rtmpUrl)
         .on('start', (commandLine) => {
-          this.logger.info('FFmpeg started with command:', commandLine);
+          this.logger.info('FFmpeg started with optimized command:', commandLine);
           resolve();
         })
         .on('error', (err) => {
@@ -361,6 +387,11 @@ export class StreamManager extends EventEmitter {
           // Update stream health based on progress
           if (progress.currentFps > 0) {
             this.status.health = 'excellent';
+          }
+          
+          // Log progress periodically for monitoring
+          if (Math.floor(Date.now() / 1000) % 30 === 0) { // Every 30 seconds
+            this.logger.info(`Stream progress - FPS: ${progress.currentFps}, Bitrate: ${progress.currentKbps}kbps`);
           }
         })
         .run();
