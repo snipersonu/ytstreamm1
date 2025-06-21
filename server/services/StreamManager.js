@@ -319,6 +319,9 @@ export class StreamManager extends EventEmitter {
         .audioFrequency(44100)
         .audioBitrate('128k')
         .outputOptions([
+          // Explicit stream mapping to ensure both video and audio are included
+          '-map', '0:v:0',  // Map first video stream
+          '-map', '0:a:0',  // Map first audio stream
           '-preset', 'fast',
           '-tune', 'zerolatency',
           '-g', String(fps * 2), // Keyframe interval
