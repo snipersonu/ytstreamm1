@@ -207,8 +207,29 @@ export class StreamManager extends EventEmitter {
 
     // Validate video file exists if specified
     if (config.videoFile && config.videoFile.path) {
+      this.logger.info(`Validating video file path: ${config.videoFile.path}`);
+      
       if (!fs.existsSync(config.videoFile.path)) {
+        this.logger.error(`Video file not found at path: ${config.videoFile.path}`);
+        
+        // Log directory contents for debugging
+        const uploadsDir = path.join(process.cwd(), 'server', 'uploads');
+        this.logger.info(`Checking uploads directory: ${uploadsDir}`);
+        
+        try {
+          if (fs.existsSync(uploadsDir)) {
+            const files = fs.readdirSync(uploadsDir);
+            this.logger.info(`Files in uploads directory: ${JSON.stringify(files)}`);
+          } else {
+            this.logger.error(`Uploads directory does not exist: ${uploadsDir}`);
+          }
+        } catch (dirError) {
+          this.logger.error(`Error reading uploads directory: ${dirError.message}`);
+        }
+        
         throw new Error('Video file not found');
+      } else {
+        this.logger.info(`Video file found successfully at: ${config.videoFile.path}`);
       }
     }
 
@@ -235,10 +256,44 @@ export class StreamManager extends EventEmitter {
     let inputSource;
     if (videoFile && videoFile.path) {
       inputSource = videoFile.path;
+      this.logger.info(`Using video file as input source: ${inputSource}`);
     } else if (videoSource) {
       inputSource = videoSource;
+      this.logger.info(`Using video URL as input source: ${inputSource}`);
     } else {
       throw new Error('No valid input source');
+    }
+
+    // Additional file existence check with detailed logging
+    if (videoFile && videoFile.path) {
+      this.logger.info(`Performing final file existence check for: ${inputSource}`);
+      
+      try {
+        const fileStats = fs.statSync(inputSource);
+        this.logger.info(`File stats - Size: ${fileStats.size} bytes, Modified: ${fileStats.mtime}`);
+        
+        // Check if file is readable
+        fs.accessSync(inputSource, fs.constants.R_OK);
+        this.logger.info(`File is readable: ${inputSource}`);
+        
+      } catch (accessError) {
+        this.logger.error(`File access error: ${accessError.message}`);
+        
+        // Log current working directory and absolute path
+        this.logger.info(`Current working directory: ${process.cwd()}`);
+        this.logger.info(`Absolute path being used: ${path.resolve(inputSource)}`);
+        
+        // Try to list parent directory
+        const parentDir = path.dirname(inputSource);
+        try {
+          const parentFiles = fs.readdirSync(parentDir);
+          this.logger.info(`Files in parent directory (${parentDir}): ${JSON.stringify(parentFiles)}`);
+        } catch (parentError) {
+          this.logger.error(`Cannot read parent directory: ${parentError.message}`);
+        }
+        
+        throw new Error(`Cannot access video file: ${accessError.message}`);
+      }
     }
 
     // Set resolution based on quality
@@ -248,6 +303,7 @@ export class StreamManager extends EventEmitter {
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeStreamKey}`;
 
     this.logger.info(`Streaming ${inputSource} to ${rtmpUrl}`);
+    this.logger.info(`Stream settings - Resolution: ${resolution}, Bitrate: ${bitrate}kbps, FPS: ${fps}`);
 
     return new Promise((resolve, reject) => {
       this.ffmpegProcess = ffmpeg(inputSource)
