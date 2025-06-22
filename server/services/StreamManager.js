@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
 import path from 'path';
+import { PlaylistManager } from './PlaylistManager.js';
 
 export class StreamManager extends EventEmitter {
   constructor(logger) {
@@ -10,8 +11,9 @@ export class StreamManager extends EventEmitter {
     this.ffmpegProcess = null;
     this.isStreaming = false;
     this.config = null;
-    this.ffmpegAvailable = null; // Cache FFmpeg availability
+    this.ffmpegAvailable = null;
     this.isBrowserEnvironment = this.detectBrowserEnvironment();
+    this.playlistManager = new PlaylistManager(logger);
     this.status = {
       isStreaming: false,
       health: 'offline',
@@ -20,14 +22,26 @@ export class StreamManager extends EventEmitter {
       fps: 0,
       resolution: '1280x720',
       errors: 0,
-      lastRestart: null
+      lastRestart: null,
+      streamType: 'single'
     };
     this.startTime = null;
     this.uptimeInterval = null;
+
+    // Listen to playlist events
+    this.playlistManager.on('itemChanged', (data) => {
+      this.status.currentPlaylistItem = data.currentItem;
+      this.status.playlistLength = data.total;
+      this.emit('statusChange', this.status);
+      this.emit('playlistUpdate', data);
+    });
+
+    this.playlistManager.on('error', (error) => {
+      this.emit('error', error);
+    });
   }
 
   detectBrowserEnvironment() {
-    // Check if we're running in a browser-based environment like WebContainer
     return typeof window !== 'undefined' || 
            process.env.WEBCONTAINER === 'true' ||
            process.platform === 'browser' ||
@@ -40,7 +54,6 @@ export class StreamManager extends EventEmitter {
       return this.ffmpegAvailable;
     }
 
-    // If we're in a browser environment, FFmpeg won't be available
     if (this.isBrowserEnvironment) {
       this.logger.warn('Running in browser environment - FFmpeg not available');
       this.ffmpegAvailable = false;
@@ -74,7 +87,6 @@ export class StreamManager extends EventEmitter {
       throw new Error('Stream is already running');
     }
 
-    // Check FFmpeg availability first
     const ffmpegAvailable = await this.checkFFmpegAvailability();
     if (!ffmpegAvailable) {
       let errorMessage;
@@ -105,7 +117,13 @@ export class StreamManager extends EventEmitter {
 
     try {
       await this.validateConfig(config);
-      await this.initializeStream();
+      
+      if (config.streamType === 'playlist') {
+        await this.startPlaylistStream();
+      } else {
+        await this.initializeStream();
+      }
+      
       this.startUptimeTracking();
       
       this.isStreaming = true;
@@ -114,9 +132,10 @@ export class StreamManager extends EventEmitter {
       this.status.bitrate = config.bitrate;
       this.status.fps = config.fps;
       this.status.resolution = config.quality === '1080p' ? '1920x1080' : '1280x720';
+      this.status.streamType = config.streamType || 'single';
       
       this.emit('statusChange', this.status);
-      this.emit('log', 'Stream started successfully');
+      this.emit('log', `Stream started successfully (${this.status.streamType} mode)`);
       
     } catch (error) {
       this.logger.error('Failed to start stream:', error);
@@ -124,6 +143,21 @@ export class StreamManager extends EventEmitter {
       this.emit('error', error);
       throw error;
     }
+  }
+
+  async startPlaylistStream() {
+    const { youtubeStreamKey, quality, bitrate, fps, playlistId, shufflePlaylist, loopPlaylist } = this.config;
+    
+    // Load playlist
+    await this.playlistManager.loadPlaylist(playlistId, {
+      shuffle: shufflePlaylist,
+      loop: loopPlaylist
+    });
+
+    // Start playlist streaming
+    await this.playlistManager.startPlaylistStream(youtubeStreamKey, quality, bitrate, fps);
+    
+    this.logger.info('Playlist stream started successfully');
   }
 
   async stopStream() {
@@ -134,6 +168,10 @@ export class StreamManager extends EventEmitter {
     this.logger.info('Stopping stream');
 
     try {
+      if (this.config?.streamType === 'playlist') {
+        this.playlistManager.stop();
+      }
+
       if (this.ffmpegProcess) {
         this.ffmpegProcess.kill('SIGTERM');
         this.ffmpegProcess = null;
@@ -148,6 +186,9 @@ export class StreamManager extends EventEmitter {
       this.status.isStreaming = false;
       this.status.health = 'offline';
       this.status.uptime = 0;
+      this.status.streamType = 'single';
+      this.status.currentPlaylistItem = null;
+      this.status.playlistLength = null;
       this.startTime = null;
 
       this.emit('statusChange', this.status);
@@ -165,7 +206,6 @@ export class StreamManager extends EventEmitter {
     try {
       if (this.isStreaming) {
         await this.stopStream();
-        // Wait a moment before restarting
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
@@ -185,65 +225,62 @@ export class StreamManager extends EventEmitter {
   }
 
   async validateConfig(config) {
-    // Check if config exists
     if (!config) {
       throw new Error('Stream configuration is required');
     }
 
-    // Validate YouTube Stream Key
     if (!config.youtubeStreamKey || config.youtubeStreamKey.trim() === '') {
       throw new Error('YouTube Stream Key is required. Please enter your stream key in the Settings tab.');
     }
 
-    // Validate stream key format (basic check)
     if (config.youtubeStreamKey.length < 10) {
       throw new Error('YouTube Stream Key appears to be invalid. Please check your stream key.');
     }
 
-    // Validate video source
-    if (!config.videoSource && !config.videoFile) {
-      throw new Error('Video source or file is required');
-    }
+    if (config.streamType === 'playlist') {
+      if (!config.playlistId) {
+        throw new Error('Playlist ID is required for playlist streaming');
+      }
+    } else {
+      if (!config.videoSource && !config.videoFile) {
+        throw new Error('Video source or file is required');
+      }
 
-    // Validate video file exists if specified
-    if (config.videoFile && config.videoFile.path) {
-      this.logger.info(`Validating video file path: ${config.videoFile.path}`);
-      
-      if (!fs.existsSync(config.videoFile.path)) {
-        this.logger.error(`Video file not found at path: ${config.videoFile.path}`);
+      if (config.videoFile && config.videoFile.path) {
+        this.logger.info(`Validating video file path: ${config.videoFile.path}`);
         
-        // Log directory contents for debugging
-        const uploadsDir = path.join(process.cwd(), 'server', 'uploads');
-        this.logger.info(`Checking uploads directory: ${uploadsDir}`);
-        
-        try {
-          if (fs.existsSync(uploadsDir)) {
-            const files = fs.readdirSync(uploadsDir);
-            this.logger.info(`Files in uploads directory: ${JSON.stringify(files)}`);
-          } else {
-            this.logger.error(`Uploads directory does not exist: ${uploadsDir}`);
+        if (!fs.existsSync(config.videoFile.path)) {
+          this.logger.error(`Video file not found at path: ${config.videoFile.path}`);
+          
+          const uploadsDir = path.join(process.cwd(), 'server', 'uploads');
+          this.logger.info(`Checking uploads directory: ${uploadsDir}`);
+          
+          try {
+            if (fs.existsSync(uploadsDir)) {
+              const files = fs.readdirSync(uploadsDir);
+              this.logger.info(`Files in uploads directory: ${JSON.stringify(files)}`);
+            } else {
+              this.logger.error(`Uploads directory does not exist: ${uploadsDir}`);
+            }
+          } catch (dirError) {
+            this.logger.error(`Error reading uploads directory: ${dirError.message}`);
           }
-        } catch (dirError) {
-          this.logger.error(`Error reading uploads directory: ${dirError.message}`);
+          
+          throw new Error('Video file not found');
+        } else {
+          this.logger.info(`Video file found successfully at: ${config.videoFile.path}`);
         }
-        
-        throw new Error('Video file not found');
-      } else {
-        this.logger.info(`Video file found successfully at: ${config.videoFile.path}`);
       }
     }
 
-    // Validate quality settings
     if (!['720p', '1080p'].includes(config.quality)) {
       throw new Error('Invalid quality setting. Must be 720p or 1080p');
     }
 
-    // Validate bitrate
     if (!config.bitrate || config.bitrate < 500 || config.bitrate > 10000) {
       throw new Error('Invalid bitrate. Must be between 500 and 10000 kbps');
     }
 
-    // Validate fps
     if (!config.fps || ![24, 30, 60].includes(config.fps)) {
       throw new Error('Invalid frame rate. Must be 24, 30, or 60 fps');
     }
@@ -252,7 +289,6 @@ export class StreamManager extends EventEmitter {
   async initializeStream() {
     const { youtubeStreamKey, videoSource, videoFile, quality, bitrate, fps } = this.config;
     
-    // Determine input source
     let inputSource;
     if (videoFile && videoFile.path) {
       inputSource = videoFile.path;
@@ -264,7 +300,6 @@ export class StreamManager extends EventEmitter {
       throw new Error('No valid input source');
     }
 
-    // Additional file existence check with detailed logging
     if (videoFile && videoFile.path) {
       this.logger.info(`Performing final file existence check for: ${inputSource}`);
       
@@ -272,18 +307,15 @@ export class StreamManager extends EventEmitter {
         const fileStats = fs.statSync(inputSource);
         this.logger.info(`File stats - Size: ${fileStats.size} bytes, Modified: ${fileStats.mtime}`);
         
-        // Check if file is readable
         fs.accessSync(inputSource, fs.constants.R_OK);
         this.logger.info(`File is readable: ${inputSource}`);
         
       } catch (accessError) {
         this.logger.error(`File access error: ${accessError.message}`);
         
-        // Log current working directory and absolute path
         this.logger.info(`Current working directory: ${process.cwd()}`);
         this.logger.info(`Absolute path being used: ${path.resolve(inputSource)}`);
         
-        // Try to list parent directory
         const parentDir = path.dirname(inputSource);
         try {
           const parentFiles = fs.readdirSync(parentDir);
@@ -296,10 +328,7 @@ export class StreamManager extends EventEmitter {
       }
     }
 
-    // Set resolution based on quality
     const resolution = quality === '1080p' ? '1920x1080' : '1280x720';
-    
-    // YouTube RTMP endpoint
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeStreamKey}`;
 
     this.logger.info(`Streaming ${inputSource} to ${rtmpUrl}`);
@@ -308,8 +337,8 @@ export class StreamManager extends EventEmitter {
     return new Promise((resolve, reject) => {
       this.ffmpegProcess = ffmpeg(inputSource)
         .inputOptions([
-          '-re', // Read input at native frame rate
-          '-stream_loop', '-1' // Loop indefinitely
+          '-re',
+          '-stream_loop', '-1'
         ])
         .videoCodec('libx264')
         .audioCodec('aac')
@@ -319,42 +348,25 @@ export class StreamManager extends EventEmitter {
         .audioFrequency(44100)
         .audioBitrate('128k')
         .outputOptions([
-          // Explicit stream mapping to ensure both video and audio are included
-          '-map', '0:v:0',  // Map first video stream
-          '-map', '0:a:0',  // Map first audio stream
-          
-          // CPU Optimization: Use ultrafast preset for minimal CPU usage
+          '-map', '0:v:0',
+          '-map', '0:a:0',
           '-preset', 'ultrafast',
-          
-          // Tune for zero latency streaming
           '-tune', 'zerolatency',
-          
-          // Optimize GOP (Group of Pictures) settings for streaming
-          '-g', String(fps * 2), // Keyframe interval (2 seconds)
-          '-keyint_min', String(fps), // Minimum keyframe interval
-          '-sc_threshold', '0', // Disable scene change detection
-          
-          // Buffer settings optimized for streaming
-          '-bufsize', String(bitrate * 1.5) + 'k', // Reduced buffer size
+          '-g', String(fps * 2),
+          '-keyint_min', String(fps),
+          '-sc_threshold', '0',
+          '-bufsize', String(bitrate * 1.5) + 'k',
           '-maxrate', bitrate + 'k',
-          
-          // Additional CPU optimizations
-          '-threads', '0', // Use all available CPU threads efficiently
-          '-slices', '1', // Single slice for better compression
-          '-refs', '1', // Reduce reference frames for faster encoding
-          '-me_method', 'hex', // Faster motion estimation
-          '-subq', '1', // Reduced subpixel motion estimation quality
-          '-trellis', '0', // Disable trellis quantization
-          '-aq-mode', '0', // Disable adaptive quantization
-          
-          // Profile and level settings for compatibility
-          '-profile:v', 'baseline', // Use baseline profile for better compatibility and speed
+          '-threads', '0',
+          '-slices', '1',
+          '-refs', '1',
+          '-me_method', 'hex',
+          '-subq', '1',
+          '-trellis', '0',
+          '-aq-mode', '0',
+          '-profile:v', 'baseline',
           '-level', '3.1',
-          
-          // Pixel format
           '-pix_fmt', 'yuv420p',
-          
-          // Output format
           '-f', 'flv'
         ])
         .output(rtmpUrl)
@@ -367,7 +379,6 @@ export class StreamManager extends EventEmitter {
           this.status.errors++;
           this.emit('error', err);
           
-          // Auto-restart if enabled
           if (this.config && this.config.autoRestart && this.isStreaming) {
             this.logger.info('Auto-restarting stream...');
             setTimeout(() => {
@@ -384,13 +395,11 @@ export class StreamManager extends EventEmitter {
           this.emit('log', 'Stream ended');
         })
         .on('progress', (progress) => {
-          // Update stream health based on progress
           if (progress.currentFps > 0) {
             this.status.health = 'excellent';
           }
           
-          // Log progress periodically for monitoring
-          if (Math.floor(Date.now() / 1000) % 30 === 0) { // Every 30 seconds
+          if (Math.floor(Date.now() / 1000) % 30 === 0) {
             this.logger.info(`Stream progress - FPS: ${progress.currentFps}, Bitrate: ${progress.currentKbps}kbps`);
           }
         })
@@ -420,6 +429,8 @@ export class StreamManager extends EventEmitter {
     if (this.uptimeInterval) {
       clearInterval(this.uptimeInterval);
     }
+
+    this.playlistManager.stop();
     
     this.logger.info('StreamManager cleaned up');
   }

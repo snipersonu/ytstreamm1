@@ -9,6 +9,9 @@ interface StreamStatus {
   resolution: string;
   errors: number;
   lastRestart: Date | null;
+  streamType?: 'single' | 'playlist';
+  currentPlaylistItem?: any;
+  playlistLength?: number;
 }
 
 interface StreamConfig {
@@ -20,6 +23,10 @@ interface StreamConfig {
   fps: number;
   autoRestart: boolean;
   backupVideo: string;
+  streamType?: 'single' | 'playlist';
+  playlistId?: string;
+  shufflePlaylist?: boolean;
+  loopPlaylist?: boolean;
 }
 
 interface StreamContextType {
@@ -28,7 +35,7 @@ interface StreamContextType {
   analytics: any[];
   logs: string[];
   updateConfig: (config: Partial<StreamConfig>) => void;
-  startStream: () => void;
+  startStream: (customConfig?: any) => void;
   stopStream: () => void;
   restartStream: () => void;
 }
@@ -56,6 +63,8 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     fps: 30,
     autoRestart: true,
     backupVideo: '',
+    streamType: 'single',
+    loopPlaylist: true,
   });
 
   const [analytics, setAnalytics] = useState([]);
@@ -63,6 +72,17 @@ export function StreamProvider({ children }: { children: ReactNode }) {
   const [ws, setWs] = useState<WebSocket | null>(null);
 
   useEffect(() => {
+    // Load saved configuration from localStorage
+    const savedConfig = localStorage.getItem('streamConfig');
+    if (savedConfig) {
+      try {
+        const parsedConfig = JSON.parse(savedConfig);
+        setConfig(prev => ({ ...prev, ...parsedConfig }));
+      } catch (error) {
+        console.error('Failed to load saved config:', error);
+      }
+    }
+
     // Get WebSocket URL based on current location
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
@@ -92,6 +112,13 @@ export function StreamProvider({ children }: { children: ReactNode }) {
         case 'error':
           addLog(`ERROR: ${data.message}`);
           break;
+        case 'playlistUpdate':
+          setStatus(prev => ({
+            ...prev,
+            currentPlaylistItem: data.payload.currentItem,
+            playlistLength: data.payload.totalItems,
+          }));
+          break;
       }
     };
 
@@ -111,6 +138,11 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Save configuration to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('streamConfig', JSON.stringify(config));
+  }, [config]);
+
   const addLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
     setLogs(prev => [...prev.slice(-99), `[${timestamp}] ${message}`]);
@@ -120,29 +152,42 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     setConfig(prev => ({ ...prev, ...newConfig }));
   };
 
-  const startStream = () => {
+  const startStream = (customConfig?: any) => {
     if (!ws) {
       addLog('ERROR: Not connected to streaming server');
       return;
     }
 
+    const streamConfig = customConfig || config;
+
     // Validate required fields before sending to server
-    if (!config.youtubeStreamKey || config.youtubeStreamKey.trim() === '') {
+    if (!streamConfig.youtubeStreamKey || streamConfig.youtubeStreamKey.trim() === '') {
       addLog('ERROR: YouTube Stream Key is required. Please enter your stream key in Settings.');
       return;
     }
 
-    if (!config.videoSource && !config.videoFile) {
-      addLog('ERROR: Video source is required. Please select a video source.');
-      return;
+    if (streamConfig.streamType === 'playlist') {
+      if (!streamConfig.playlistId) {
+        addLog('ERROR: Playlist is required for playlist streaming mode.');
+        return;
+      }
+    } else {
+      if (!streamConfig.videoSource && !streamConfig.videoFile) {
+        addLog('ERROR: Video source is required. Please select a video source.');
+        return;
+      }
     }
     
     ws.send(JSON.stringify({
       type: 'start',
-      config: config
+      config: streamConfig
     }));
     
-    addLog('Starting stream...');
+    if (streamConfig.streamType === 'playlist') {
+      addLog('Starting playlist stream...');
+    } else {
+      addLog('Starting stream...');
+    }
   };
 
   const stopStream = () => {

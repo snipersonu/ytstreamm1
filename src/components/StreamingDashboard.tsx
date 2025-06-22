@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useStream } from '../contexts/StreamContext';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Play,
   Square,
@@ -14,13 +15,18 @@ import {
   Video,
   Users,
   Loader2,
+  List,
+  Music,
+  Settings as SettingsIcon,
 } from 'lucide-react';
 
 export default function StreamingDashboard() {
   const { status, config, logs, startStream, stopStream, restartStream, updateConfig } = useStream();
+  const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [videoSource, setVideoSource] = useState('file');
+  const [videoSource, setVideoSource] = useState('playlist');
   const [isUploading, setIsUploading] = useState(false);
+  const [showPlaylistSettings, setShowPlaylistSettings] = useState(false);
 
   const getHealthColor = (health: string) => {
     switch (health) {
@@ -54,6 +60,9 @@ export default function StreamingDashboard() {
 
       const response = await fetch('/api/upload', {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
         body: formData,
       });
 
@@ -90,7 +99,21 @@ export default function StreamingDashboard() {
   const canStartStream = () => {
     return config.youtubeStreamKey && 
            config.youtubeStreamKey.trim().length > 10 && 
-           (config.videoSource || config.videoFile);
+           (config.videoSource || config.videoFile || config.playlistId);
+  };
+
+  const startStreamWithPlaylist = async () => {
+    if (videoSource === 'playlist' && config.playlistId) {
+      // Start stream with playlist configuration
+      await startStream({
+        ...config,
+        streamType: 'playlist',
+        playlistId: config.playlistId,
+      });
+    } else {
+      // Start regular stream
+      await startStream();
+    }
   };
 
   return (
@@ -145,20 +168,62 @@ export default function StreamingDashboard() {
         <div className="lg:col-span-2">
           <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
             <h3 className="text-lg font-semibold text-white mb-4">Live Preview</h3>
-            <div className="aspect-video bg-black rounded-lg flex items-center justify-center border border-white/10">
+            <div className="aspect-video bg-black rounded-lg flex items-center justify-center border border-white/10 relative overflow-hidden">
               {status.isStreaming ? (
                 <div className="text-center">
                   <div className="w-16 h-16 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                   <p className="text-white font-medium">Streaming Live</p>
                   <p className="text-gray-400 text-sm">{status.fps} FPS • {status.bitrate} kbps</p>
+                  {config.streamType === 'playlist' && (
+                    <div className="mt-2 flex items-center justify-center space-x-2">
+                      <List className="w-4 h-4 text-blue-400" />
+                      <span className="text-blue-400 text-sm">Playlist Mode</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center">
                   <Video className="w-16 h-16 text-gray-500 mx-auto mb-4" />
                   <p className="text-gray-400">Stream Preview</p>
+                  {videoSource === 'playlist' && (
+                    <p className="text-blue-400 text-sm mt-2">Lofi-style playlist streaming</p>
+                  )}
                 </div>
               )}
             </div>
+
+            {/* Current Playing Info */}
+            {status.isStreaming && config.streamType === 'playlist' && status.currentPlaylistItem && (
+              <div className="mt-4 bg-black/50 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-white font-medium">{status.currentPlaylistItem.name}</p>
+                    <div className="flex items-center space-x-4 mt-1 text-sm text-gray-400">
+                      {status.currentPlaylistItem.video && (
+                        <span className="flex items-center space-x-1">
+                          <Video className="w-3 h-3" />
+                          <span>{status.currentPlaylistItem.video.name}</span>
+                        </span>
+                      )}
+                      {status.currentPlaylistItem.audio && (
+                        <span className="flex items-center space-x-1">
+                          <Music className="w-3 h-3" />
+                          <span>{status.currentPlaylistItem.audio.name}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-white text-sm">
+                      {status.currentPlaylistItem.order + 1} / {status.playlistLength}
+                    </p>
+                    <p className="text-gray-400 text-xs">
+                      {status.currentPlaylistItem.audio?.loop ? 'Looping' : 'Single play'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -185,7 +250,7 @@ export default function StreamingDashboard() {
             
             <div className="space-y-3">
               <button
-                onClick={startStream}
+                onClick={startStreamWithPlaylist}
                 disabled={status.isStreaming || !canStartStream()}
                 className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
               >
@@ -220,6 +285,17 @@ export default function StreamingDashboard() {
             <div className="space-y-4">
               <div className="flex space-x-2">
                 <button
+                  onClick={() => setVideoSource('playlist')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                    videoSource === 'playlist'
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-white/10 text-gray-300 hover:bg-white/20'
+                  }`}
+                >
+                  <List className="w-4 h-4 inline mr-2" />
+                  Playlist
+                </button>
+                <button
                   onClick={() => setVideoSource('file')}
                   className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
                     videoSource === 'file'
@@ -241,7 +317,38 @@ export default function StreamingDashboard() {
                 </button>
               </div>
 
-              {videoSource === 'file' ? (
+              {videoSource === 'playlist' ? (
+                <div className="space-y-3">
+                  <div className="bg-purple-500/20 border border-purple-500/30 rounded-lg p-4">
+                    <div className="flex items-center space-x-3 mb-3">
+                      <List className="w-5 h-5 text-purple-400" />
+                      <span className="text-purple-400 font-medium">Lofi-Style Streaming</span>
+                    </div>
+                    <p className="text-gray-300 text-sm mb-3">
+                      Stream with video backgrounds and looping audio tracks, perfect for lofi music streams.
+                    </p>
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm">
+                        {config.playlistId ? (
+                          <div className="flex items-center space-x-2">
+                            <CheckCircle className="w-4 h-4 text-green-400" />
+                            <span className="text-green-400">Playlist configured</span>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">No playlist selected</span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setShowPlaylistSettings(true)}
+                        className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1 transition-colors"
+                      >
+                        <SettingsIcon className="w-3 h-3" />
+                        <span>Configure</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : videoSource === 'file' ? (
                 <div>
                   <input
                     ref={fileInputRef}
@@ -324,6 +431,88 @@ export default function StreamingDashboard() {
           )}
         </div>
       </div>
+
+      {/* Playlist Settings Modal */}
+      {showPlaylistSettings && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Playlist Settings</h3>
+              <button
+                onClick={() => setShowPlaylistSettings(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Select Playlist
+                </label>
+                <select
+                  value={config.playlistId || ''}
+                  onChange={(e) => updateConfig({ playlistId: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Select a playlist...</option>
+                  <option value="default">Default Lofi Playlist</option>
+                  <option value="custom1">My Custom Playlist</option>
+                </select>
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-white font-medium">Shuffle Mode</p>
+                  <p className="text-gray-400 text-sm">Randomize playlist order</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={config.shufflePlaylist || false}
+                    onChange={(e) => updateConfig({ shufflePlaylist: e.target.checked })}
+                    className="sr-only peer" 
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-white font-medium">Loop Playlist</p>
+                  <p className="text-gray-400 text-sm">Restart from beginning when finished</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={config.loopPlaylist !== false}
+                    onChange={(e) => updateConfig({ loopPlaylist: e.target.checked })}
+                    className="sr-only peer" 
+                    defaultChecked 
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+            </div>
+            
+            <div className="flex justify-end space-x-3 mt-6">
+              <button
+                onClick={() => setShowPlaylistSettings(false)}
+                className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => setShowPlaylistSettings(false)}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
+              >
+                Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -5,10 +5,15 @@ import cors from 'cors';
 import helmet from 'helmet';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { StreamManager } from './services/StreamManager.js';
 import { HealthMonitor } from './services/HealthMonitor.js';
 import { Logger } from './utils/Logger.js';
+import authRoutes from './routes/auth.js';
+import mediaRoutes from './routes/media.js';
+import playlistRoutes from './routes/playlists.js';
+import { authenticateToken } from './middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,25 +25,46 @@ const wss = new WebSocketServer({ server });
 // Initialize services
 const logger = new Logger();
 
-// Add debugging for PORT environment variable
 logger.info(`Environment PORT value: ${process.env.PORT}`);
 logger.info(`Environment NODE_ENV value: ${process.env.NODE_ENV}`);
-logger.info(`All PORT-related environment variables: ${Object.keys(process.env).filter(key => key.includes('PORT')).join(', ')}`);
 
 const streamManager = new StreamManager(logger);
 const healthMonitor = new HealthMonitor(logger);
+
+// Create upload directories
+const uploadDirs = [
+  path.join(__dirname, 'uploads'),
+  path.join(__dirname, 'uploads/video'),
+  path.join(__dirname, 'uploads/audio'),
+  path.join(__dirname, 'uploads/video/thumbnails')
+];
+
+uploadDirs.forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    logger.info(`Created directory: ${dir}`);
+  }
+});
 
 // Middleware
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
+// Serve uploaded files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Always serve static files in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../dist')));
 }
 
-// Multer configuration for file uploads
+// API Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/media', mediaRoutes);
+app.use('/api/playlists', playlistRoutes);
+
+// Multer configuration for file uploads (legacy support)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, path.join(__dirname, 'uploads'));
@@ -83,7 +109,7 @@ wss.on('connection', (ws) => {
           await streamManager.startStream(data.config);
           broadcast({
             type: 'log',
-            message: 'Stream started successfully'
+            message: `Stream started successfully (${data.config.streamType || 'single'} mode)`
           });
           break;
           
@@ -131,8 +157,8 @@ function broadcast(data) {
   });
 }
 
-// API Routes
-app.post('/api/upload', upload.single('video'), (req, res) => {
+// Legacy upload endpoint
+app.post('/api/upload', authenticateToken, upload.single('video'), (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -155,11 +181,11 @@ app.get('/api/status', (req, res) => {
   res.json(streamManager.getStatus());
 });
 
-app.get('/api/logs', (req, res) => {
+app.get('/api/logs', authenticateToken, (req, res) => {
   res.json({ logs: logger.getLogs() });
 });
 
-app.get('/api/analytics', (req, res) => {
+app.get('/api/analytics', authenticateToken, (req, res) => {
   res.json({ analytics: healthMonitor.getAnalytics() });
 });
 
@@ -205,6 +231,13 @@ streamManager.on('log', (message) => {
   });
 });
 
+streamManager.on('playlistUpdate', (data) => {
+  broadcast({
+    type: 'playlistUpdate',
+    payload: data
+  });
+});
+
 // Always serve React app for all other routes in production
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (req, res) => {
@@ -221,7 +254,6 @@ app.use((error, req, res, next) => {
 // Use port 3001 internally (will be mapped to 3000 by docker-compose)
 const PORT = process.env.PORT || 3001;
 
-// Log the final PORT value being used
 logger.info(`Final PORT value being used: ${PORT}`);
 
 server.listen(PORT, '0.0.0.0', () => {
