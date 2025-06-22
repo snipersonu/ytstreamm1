@@ -64,6 +64,29 @@ app.use('/api/auth', authRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/playlists', playlistRoutes);
 
+// New FFmpeg check endpoint
+app.get('/api/ffmpeg-check', async (req, res) => {
+  try {
+    logger.info('FFmpeg check endpoint called');
+    const ffmpegStatus = await streamManager.getFFmpegStatus();
+    
+    logger.info('FFmpeg status check result:', ffmpegStatus);
+    
+    res.json({
+      success: true,
+      ...ffmpegStatus,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error in FFmpeg check endpoint:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Multer configuration for file uploads (legacy support)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {

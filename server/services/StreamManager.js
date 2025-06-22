@@ -42,15 +42,37 @@ export class StreamManager extends EventEmitter {
   }
 
   detectBrowserEnvironment() {
-    return typeof window !== 'undefined' || 
-           process.env.WEBCONTAINER === 'true' ||
-           process.platform === 'browser' ||
-           !process.env.PATH ||
-           process.env.NODE_ENV === 'webcontainer';
+    // Enhanced logging for environment detection
+    const windowExists = typeof window !== 'undefined';
+    const webcontainerEnv = process.env.WEBCONTAINER === 'true';
+    const browserPlatform = process.platform === 'browser';
+    const pathExists = !!process.env.PATH;
+    const nodeEnv = process.env.NODE_ENV;
+    
+    this.logger.info('Environment Detection Details:', {
+      windowExists,
+      webcontainerEnv,
+      browserPlatform,
+      pathExists,
+      nodeEnv,
+      platform: process.platform,
+      pathValue: process.env.PATH ? 'exists' : 'missing'
+    });
+
+    const isBrowser = windowExists || 
+                     webcontainerEnv ||
+                     browserPlatform ||
+                     !pathExists ||
+                     nodeEnv === 'webcontainer';
+
+    this.logger.info(`Browser environment detected: ${isBrowser}`);
+    
+    return isBrowser;
   }
 
   async checkFFmpegAvailability() {
     if (this.ffmpegAvailable !== null) {
+      this.logger.info(`FFmpeg availability cached: ${this.ffmpegAvailable}`);
       return this.ffmpegAvailable;
     }
 
@@ -60,9 +82,11 @@ export class StreamManager extends EventEmitter {
       return false;
     }
 
+    this.logger.info('Checking FFmpeg availability...');
+
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        this.logger.error('FFmpeg availability check timed out');
+        this.logger.error('FFmpeg availability check timed out after 5 seconds');
         this.ffmpegAvailable = false;
         resolve(false);
       }, 5000);
@@ -70,16 +94,69 @@ export class StreamManager extends EventEmitter {
       ffmpeg.getAvailableFormats((err, formats) => {
         clearTimeout(timeout);
         if (err) {
-          this.logger.error('FFmpeg not available:', err.message);
+          this.logger.error('FFmpeg not available - Error details:', {
+            message: err.message,
+            code: err.code,
+            errno: err.errno,
+            syscall: err.syscall,
+            path: err.path,
+            stack: err.stack
+          });
           this.ffmpegAvailable = false;
           resolve(false);
         } else {
-          this.logger.info('FFmpeg is available');
+          this.logger.info('FFmpeg is available and working');
+          this.logger.info(`FFmpeg formats available: ${Object.keys(formats || {}).length} formats detected`);
           this.ffmpegAvailable = true;
           resolve(true);
         }
       });
     });
+  }
+
+  // New method to get detailed FFmpeg status for API endpoint
+  async getFFmpegStatus() {
+    const status = {
+      isBrowserEnvironment: this.isBrowserEnvironment,
+      ffmpegAvailable: this.ffmpegAvailable,
+      environmentDetails: {
+        platform: process.platform,
+        nodeVersion: process.version,
+        hasPath: !!process.env.PATH,
+        pathLength: process.env.PATH ? process.env.PATH.length : 0,
+        nodeEnv: process.env.NODE_ENV,
+        webcontainer: process.env.WEBCONTAINER,
+        windowExists: typeof window !== 'undefined'
+      }
+    };
+
+    // Test FFmpeg availability if not already checked
+    if (this.ffmpegAvailable === null) {
+      status.ffmpegAvailable = await this.checkFFmpegAvailability();
+    }
+
+    // Try to get FFmpeg version info
+    try {
+      await new Promise((resolve, reject) => {
+        ffmpeg.getAvailableFormats((err, formats) => {
+          if (err) {
+            status.ffmpegError = {
+              message: err.message,
+              code: err.code,
+              errno: err.errno
+            };
+            reject(err);
+          } else {
+            status.ffmpegFormats = Object.keys(formats || {}).length;
+            resolve(formats);
+          }
+        });
+      });
+    } catch (error) {
+      this.logger.error('Error getting FFmpeg formats:', error);
+    }
+
+    return status;
   }
 
   async startStream(config) {
@@ -147,6 +224,15 @@ export class StreamManager extends EventEmitter {
 
   async startPlaylistStream() {
     const { youtubeStreamKey, quality, bitrate, fps, playlistId, shufflePlaylist, loopPlaylist } = this.config;
+    
+    this.logger.info('Starting playlist stream with configuration:', {
+      playlistId,
+      shufflePlaylist,
+      loopPlaylist,
+      quality,
+      bitrate,
+      fps
+    });
     
     // Load playlist
     await this.playlistManager.loadPlaylist(playlistId, {
@@ -241,6 +327,11 @@ export class StreamManager extends EventEmitter {
       if (!config.playlistId) {
         throw new Error('Playlist ID is required for playlist streaming');
       }
+      this.logger.info('Validating playlist configuration:', {
+        playlistId: config.playlistId,
+        shufflePlaylist: config.shufflePlaylist,
+        loopPlaylist: config.loopPlaylist
+      });
     } else {
       if (!config.videoSource && !config.videoFile) {
         throw new Error('Video source or file is required');
