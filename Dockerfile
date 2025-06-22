@@ -39,8 +39,8 @@ RUN npm ci --only=production
 # Copy built frontend from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Copy server code directly from build context to ensure all files are included
-COPY ./server ./server
+# Copy entire application source code to ensure all modules are available
+COPY . .
 
 # Create necessary directories
 RUN mkdir -p server/logs server/uploads
