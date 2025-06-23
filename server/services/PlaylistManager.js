@@ -227,12 +227,14 @@ export class PlaylistManager extends EventEmitter {
           '-g', String(fps * 2),
           '-keyint_min', String(fps),
           '-sc_threshold', '0',
-          '-bufsize', String(bitrate * 1.5) + 'k',
-          '-maxrate', bitrate + 'k',
+          '-bufsize', String(bitrate * 2.4) + 'k',  // Increased buffer size for smoother streaming
+          '-maxrate', String(bitrate * 1.2) + 'k',  // Slightly higher max rate for stability
           '-threads', '0',
           '-profile:v', 'baseline',
           '-level', '3.1',
           '-pix_fmt', 'yuv420p',
+          '-vsync', '1',  // Ensure constant frame rate
+          '-r', String(fps),  // Explicitly set output frame rate
           '-f', 'flv'
         ])
         .output(rtmpUrl)
