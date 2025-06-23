@@ -9,10 +9,21 @@ const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
+// Helper function to determine media type from mimetype
+const getMediaTypeFromMime = (mimetype) => {
+  if (mimetype.startsWith('video/')) {
+    return 'video';
+  } else if (mimetype.startsWith('audio/')) {
+    return 'audio';
+  }
+  return null;
+};
+
 // Configure multer for media uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadPath = req.body.type === 'audio' 
+    const mediaType = getMediaTypeFromMime(file.mimetype);
+    const uploadPath = mediaType === 'audio' 
       ? path.join(__dirname, '../uploads/audio')
       : path.join(__dirname, '../uploads/video');
     cb(null, uploadPath);
@@ -31,24 +42,38 @@ const upload = multer({
     fileSize: 500 * 1024 * 1024 // 500MB limit
   },
   fileFilter: (req, file, cb) => {
-    const type = req.body.type;
+    const mediaType = getMediaTypeFromMime(file.mimetype);
     
-    if (type === 'video') {
-      const allowedVideoTypes = ['video/mp4', 'video/webm', 'video/mov', 'video/avi'];
+    if (mediaType === 'video') {
+      const allowedVideoTypes = [
+        'video/mp4', 
+        'video/webm', 
+        'video/mov', 
+        'video/avi', 
+        'video/quicktime',
+        'video/x-msvideo'
+      ];
       if (allowedVideoTypes.includes(file.mimetype)) {
         cb(null, true);
       } else {
         cb(new Error('Invalid video file type. Only MP4, WebM, MOV, and AVI are allowed.'));
       }
-    } else if (type === 'audio') {
-      const allowedAudioTypes = ['audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/ogg'];
+    } else if (mediaType === 'audio') {
+      const allowedAudioTypes = [
+        'audio/mp3', 
+        'audio/mpeg', 
+        'audio/wav', 
+        'audio/ogg',
+        'audio/x-wav',
+        'audio/wave'
+      ];
       if (allowedAudioTypes.includes(file.mimetype)) {
         cb(null, true);
       } else {
         cb(new Error('Invalid audio file type. Only MP3, WAV, and OGG are allowed.'));
       }
     } else {
-      cb(new Error('Invalid media type specified.'));
+      cb(new Error('Invalid file type. Only video and audio files are allowed.'));
     }
   }
 });
@@ -60,7 +85,12 @@ router.post('/upload', authenticateToken, upload.single('media'), async (req, re
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const mediaType = req.body.type;
+    const mediaType = getMediaTypeFromMime(req.file.mimetype);
+    
+    if (!mediaType) {
+      return res.status(400).json({ error: 'Invalid media type' });
+    }
+
     const mediaData = {
       id: Date.now().toString(),
       name: req.file.originalname,
@@ -83,7 +113,7 @@ router.post('/upload', authenticateToken, upload.single('media'), async (req, re
 
   } catch (error) {
     console.error('Media upload error:', error);
-    res.status(500).json({ error: 'Upload failed' });
+    res.status(500).json({ error: 'Upload failed: ' + error.message });
   }
 });
 
