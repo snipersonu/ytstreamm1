@@ -26,6 +26,7 @@ import {
   FileAudio,
   Check,
   Search,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface MediaItem {
@@ -299,7 +300,43 @@ export default function PlaylistManager() {
     playItem(audioItems[prevIndex]);
   };
 
+  // Validation function to check if playlist is ready for saving
+  const validatePlaylist = () => {
+    // Check if playlist has a name
+    if (!playlistName.trim()) {
+      alert('Please enter a playlist name before saving.');
+      return false;
+    }
+
+    // Check if there's a background video
+    if (!backgroundVideo) {
+      alert('Please select a background video before saving the playlist.');
+      return false;
+    }
+
+    // Check if there are any audio tracks
+    if (audioItems.length === 0) {
+      alert('Please add at least one audio track to the playlist before saving.');
+      return false;
+    }
+
+    // Check if all audio tracks have assigned audio files
+    const tracksWithoutAudio = audioItems.filter(item => !item.audio);
+    if (tracksWithoutAudio.length > 0) {
+      const trackNumbers = tracksWithoutAudio.map(item => item.order + 1).join(', ');
+      alert(`Please assign audio files to all tracks before saving. Missing audio for track(s): ${trackNumbers}`);
+      return false;
+    }
+
+    return true;
+  };
+
   const savePlaylist = async () => {
+    // Validate playlist before saving
+    if (!validatePlaylist()) {
+      return;
+    }
+
     try {
       setIsSaving(true);
       
@@ -359,6 +396,9 @@ export default function PlaylistManager() {
     audio.name.toLowerCase().includes(audioSearchTerm.toLowerCase())
   );
 
+  // Check if playlist is ready for streaming
+  const isPlaylistReady = backgroundVideo && audioItems.length > 0 && audioItems.every(item => item.audio);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -413,6 +453,25 @@ export default function PlaylistManager() {
           </button>
         </div>
       </div>
+
+      {/* Playlist Status Warning */}
+      {!isPlaylistReady && (audioItems.length > 0 || backgroundVideo) && (
+        <div className="bg-yellow-500/20 border border-yellow-500/30 rounded-xl p-4">
+          <div className="flex items-start space-x-3">
+            <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-yellow-400 font-medium">Playlist Incomplete</p>
+              <div className="text-yellow-300 text-sm mt-1 space-y-1">
+                {!backgroundVideo && <p>• Select a background video</p>}
+                {audioItems.length === 0 && <p>• Add at least one audio track</p>}
+                {audioItems.some(item => !item.audio) && (
+                  <p>• Assign audio files to all tracks (missing: {audioItems.filter(item => !item.audio).map(item => item.order + 1).join(', ')})</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Preview Player */}
