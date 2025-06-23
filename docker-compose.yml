@@ -11,6 +11,7 @@ services:
     volumes:
       - ./server/uploads:/app/server/uploads
       - ./server/logs:/app/server/logs
+      - ./server/db.json:/app/server/db.json
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/api/status"]
