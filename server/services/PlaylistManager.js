@@ -2,7 +2,11 @@ import { EventEmitter } from 'events';
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { Database } from '../utils/Database.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export class PlaylistManager extends EventEmitter {
   constructor(logger) {
@@ -110,35 +114,83 @@ export class PlaylistManager extends EventEmitter {
     }
   }
 
+  /**
+   * Converts a relative URL path to an absolute file system path
+   * @param {string} urlPath - The URL path (e.g., "/uploads/video/file.mp4")
+   * @returns {string} - The absolute file system path
+   */
+  resolveFilePath(urlPath) {
+    if (!urlPath) {
+      throw new Error('URL path is required');
+    }
+
+    // Remove leading slash if present
+    const relativePath = urlPath.startsWith('/') ? urlPath.substring(1) : urlPath;
+    
+    // Construct absolute path relative to the server directory
+    // In Docker, the working directory is /app, so server files are at /app/server
+    const absolutePath = path.join(process.cwd(), 'server', relativePath);
+    
+    this.logger.info(`Resolving file path: ${urlPath} -> ${absolutePath}`);
+    
+    // Verify the file exists
+    if (!fs.existsSync(absolutePath)) {
+      this.logger.error(`File not found at resolved path: ${absolutePath}`);
+      
+      // Log directory contents for debugging
+      const parentDir = path.dirname(absolutePath);
+      try {
+        if (fs.existsSync(parentDir)) {
+          const files = fs.readdirSync(parentDir);
+          this.logger.info(`Files in directory ${parentDir}: ${JSON.stringify(files)}`);
+        } else {
+          this.logger.error(`Parent directory does not exist: ${parentDir}`);
+        }
+      } catch (dirError) {
+        this.logger.error(`Error reading directory ${parentDir}:`, dirError);
+      }
+      
+      throw new Error(`File not found: ${absolutePath}`);
+    }
+    
+    return absolutePath;
+  }
+
   async createLofiStream(audioItem, youtubeStreamKey, quality, bitrate, fps) {
     const resolution = quality === '1080p' ? '1920x1080' : '1280x720';
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeStreamKey}`;
 
-    // Background video (loops continuously)
-    const videoInput = this.backgroundVideo.url;
-    // Current audio item
-    const audioInput = audioItem.url;
-
-    if (!videoInput || !audioInput) {
-      throw new Error('Missing video or audio source');
+    // Validate inputs
+    if (!this.backgroundVideo || !this.backgroundVideo.url) {
+      throw new Error('Missing background video');
     }
+
+    if (!audioItem.audio || !audioItem.audio.url) {
+      throw new Error('Missing audio source');
+    }
+
+    // Resolve file paths
+    let videoPath, audioPath;
+    
+    try {
+      videoPath = this.resolveFilePath(this.backgroundVideo.url);
+      audioPath = this.resolveFilePath(audioItem.audio.url);
+    } catch (error) {
+      this.logger.error('Failed to resolve file paths:', error);
+      throw new Error(`Missing video or audio source: ${error.message}`);
+    }
+
+    this.logger.info(`Video path resolved: ${videoPath}`);
+    this.logger.info(`Audio path resolved: ${audioPath}`);
 
     return new Promise((resolve, reject) => {
       let command = ffmpeg();
 
       // Add background video input (loops infinitely)
-      const videoPath = videoInput.startsWith('/uploads/') 
-        ? path.join(process.cwd(), 'server', videoInput)
-        : videoInput;
-      
       command = command.input(videoPath);
       command = command.inputOptions(['-stream_loop', '-1']); // Loop video infinitely
 
       // Add current audio input
-      const audioPath = audioInput.startsWith('/uploads/') 
-        ? path.join(process.cwd(), 'server', audioInput)
-        : audioInput;
-      
       command = command.input(audioPath);
       // Don't loop audio - let it play once and then move to next item
 
