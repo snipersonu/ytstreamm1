@@ -1,8 +1,10 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { authenticateToken } from '../middleware/auth.js';
+import { Database } from '../utils/Database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -100,11 +102,15 @@ router.post('/upload', authenticateToken, upload.single('media'), async (req, re
       size: req.file.size,
       mimetype: req.file.mimetype,
       uploadedBy: req.user.id,
-      uploadedAt: new Date()
+      uploadedAt: new Date().toISOString()
     };
 
-    // In a real implementation, save to database
-    // await db.media.create(mediaData);
+    // Save to database
+    const success = Database.addMedia(mediaData);
+    
+    if (!success) {
+      return res.status(500).json({ error: 'Failed to save media metadata' });
+    }
 
     res.json({
       message: 'Media uploaded successfully',
@@ -122,36 +128,21 @@ router.get('/library', authenticateToken, async (req, res) => {
   try {
     const { type } = req.query;
     
-    // In a real implementation, fetch from database
-    // const media = await db.media.findAll({
-    //   where: { 
-    //     uploadedBy: req.user.id,
-    //     ...(type && { type })
-    //   }
-    // });
+    // Get media from database
+    let media = Database.getMedia(req.user.id);
+    
+    // Filter by type if specified
+    if (type) {
+      media = media.filter(m => m.type === type);
+    }
 
-    // Mock data for demonstration
-    const mockMedia = [
-      {
-        id: '1',
-        name: 'Lofi City Rain.mp4',
-        url: '/uploads/video/lofi-city-rain.mp4',
-        type: 'video',
-        duration: 300,
-        thumbnail: '/uploads/video/thumbnails/lofi-city-rain.jpg'
-      },
-      {
-        id: '2',
-        name: 'Chill Beats.mp3',
-        url: '/uploads/audio/chill-beats.mp3',
-        type: 'audio',
-        duration: 180
-      }
-    ];
+    // Check if files still exist and add duration/thumbnail info
+    const validMedia = media.filter(item => {
+      const filePath = path.join(__dirname, '..', item.url);
+      return fs.existsSync(filePath);
+    });
 
-    const filteredMedia = type ? mockMedia.filter(m => m.type === type) : mockMedia;
-
-    res.json({ media: filteredMedia });
+    res.json({ media: validMedia });
 
   } catch (error) {
     console.error('Error fetching media library:', error);
@@ -164,17 +155,18 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // In a real implementation, delete from database and file system
-    // const media = await db.media.findOne({
-    //   where: { id, uploadedBy: req.user.id }
-    // });
+    // Get media item from database
+    const mediaItem = Database.deleteMedia(id, req.user.id);
     
-    // if (!media) {
-    //   return res.status(404).json({ error: 'Media not found' });
-    // }
+    if (!mediaItem) {
+      return res.status(404).json({ error: 'Media not found' });
+    }
     
-    // await fs.unlink(media.filePath);
-    // await media.destroy();
+    // Delete the actual file
+    const filePath = path.join(__dirname, '..', mediaItem.url);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
 
     res.json({ message: 'Media deleted successfully' });
 

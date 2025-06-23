@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Plus,
@@ -20,6 +20,7 @@ import {
   Settings,
   Save,
   X,
+  Loader2,
 } from 'lucide-react';
 
 interface MediaItem {
@@ -54,10 +55,84 @@ export default function PlaylistManager() {
   const [isUploading, setIsUploading] = useState(false);
   const [editingItem, setEditingItem] = useState<PlaylistItem | null>(null);
   const [draggedItem, setDraggedItem] = useState<PlaylistItem | null>(null);
+  const [currentPlaylistId, setCurrentPlaylistId] = useState<string | null>(null);
+  const [playlistName, setPlaylistName] = useState('My Playlist');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load media library and playlists on component mount
+  useEffect(() => {
+    loadMediaLibrary();
+    loadPlaylists();
+  }, []);
+
+  const loadMediaLibrary = async () => {
+    try {
+      const response = await fetch('/api/media/library', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMediaLibrary(data.media.map(item => ({
+          ...item,
+          volume: 1.0,
+          loop: item.type === 'audio',
+          enabled: true,
+        })));
+      }
+    } catch (error) {
+      console.error('Error loading media library:', error);
+    }
+  };
+
+  const loadPlaylists = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch('/api/playlists', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Load the first playlist if available
+        if (data.playlists.length > 0) {
+          await loadPlaylist(data.playlists[0].id);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading playlists:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadPlaylist = async (playlistId: string) => {
+    try {
+      const response = await fetch(`/api/playlists/${playlistId}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setPlaylist(data.playlist.items || []);
+        setPlaylistName(data.playlist.name);
+        setCurrentPlaylistId(playlistId);
+      }
+    } catch (error) {
+      console.error('Error loading playlist:', error);
+    }
+  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -68,7 +143,6 @@ export default function PlaylistManager() {
     try {
       const formData = new FormData();
       formData.append('media', file);
-      formData.append('type', uploadType);
 
       const response = await fetch('/api/media/upload', {
         method: 'POST',
@@ -86,13 +160,13 @@ export default function PlaylistManager() {
       
       const newMediaItem: MediaItem = {
         id: result.id,
-        type: uploadType,
+        type: result.type,
         name: result.name,
         url: result.url,
         duration: result.duration || 0,
         thumbnail: result.thumbnail,
         volume: 1.0,
-        loop: uploadType === 'audio',
+        loop: result.type === 'audio',
         enabled: true,
       };
 
@@ -199,34 +273,80 @@ export default function PlaylistManager() {
 
   const savePlaylist = async () => {
     try {
-      const response = await fetch('/api/playlists', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: JSON.stringify({
-          name: 'My Playlist',
-          items: playlist,
-        }),
-      });
+      setIsSaving(true);
+      
+      const playlistData = {
+        name: playlistName,
+        items: playlist,
+      };
+
+      let response;
+      if (currentPlaylistId) {
+        // Update existing playlist
+        response = await fetch(`/api/playlists/${currentPlaylistId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          },
+          body: JSON.stringify(playlistData),
+        });
+      } else {
+        // Create new playlist
+        response = await fetch('/api/playlists', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          },
+          body: JSON.stringify(playlistData),
+        });
+      }
 
       if (!response.ok) {
         throw new Error('Failed to save playlist');
+      }
+
+      const result = await response.json();
+      
+      if (!currentPlaylistId) {
+        setCurrentPlaylistId(result.playlist.id);
       }
 
       alert('Playlist saved successfully!');
     } catch (error) {
       console.error('Save error:', error);
       alert('Failed to save playlist');
+    } finally {
+      setIsSaving(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex items-center space-x-2">
+          <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
+          <span className="text-white">Loading playlist manager...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-white">Playlist Manager</h2>
+        <div className="flex items-center space-x-4">
+          <h2 className="text-2xl font-bold text-white">Playlist Manager</h2>
+          <input
+            type="text"
+            value={playlistName}
+            onChange={(e) => setPlaylistName(e.target.value)}
+            className="bg-white/10 border border-white/20 rounded-lg px-3 py-1 text-white text-lg font-medium focus:outline-none focus:border-blue-500"
+            placeholder="Playlist name"
+          />
+        </div>
         <div className="flex space-x-3">
           <button
             onClick={() => setShowMediaUpload(true)}
@@ -244,10 +364,15 @@ export default function PlaylistManager() {
           </button>
           <button
             onClick={savePlaylist}
-            className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
+            disabled={isSaving}
+            className="bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
           >
-            <Save className="w-4 h-4" />
-            <span>Save Playlist</span>
+            {isSaving ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            <span>{isSaving ? 'Saving...' : 'Save Playlist'}</span>
           </button>
         </div>
       </div>
@@ -600,7 +725,7 @@ export default function PlaylistManager() {
               >
                 {isUploading ? (
                   <div className="flex items-center justify-center space-x-2">
-                    <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                    <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
                     <span className="text-gray-300 font-medium">Uploading...</span>
                   </div>
                 ) : (

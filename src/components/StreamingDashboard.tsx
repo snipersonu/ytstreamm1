@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useStream } from '../contexts/StreamContext';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -18,6 +18,7 @@ import {
   List,
   Music,
   Settings as SettingsIcon,
+  X,
 } from 'lucide-react';
 
 export default function StreamingDashboard() {
@@ -27,6 +28,35 @@ export default function StreamingDashboard() {
   const [videoSource, setVideoSource] = useState('playlist');
   const [isUploading, setIsUploading] = useState(false);
   const [showPlaylistSettings, setShowPlaylistSettings] = useState(false);
+  const [availablePlaylists, setAvailablePlaylists] = useState([]);
+  const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
+
+  // Load available playlists when playlist settings modal opens
+  useEffect(() => {
+    if (showPlaylistSettings) {
+      loadAvailablePlaylists();
+    }
+  }, [showPlaylistSettings]);
+
+  const loadAvailablePlaylists = async () => {
+    try {
+      setIsLoadingPlaylists(true);
+      const response = await fetch('/api/playlists', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAvailablePlaylists(data.playlists);
+      }
+    } catch (error) {
+      console.error('Error loading playlists:', error);
+    } finally {
+      setIsLoadingPlaylists(false);
+    }
+  };
 
   const getHealthColor = (health: string) => {
     switch (health) {
@@ -451,15 +481,31 @@ export default function StreamingDashboard() {
                 <label className="block text-sm font-medium text-gray-300 mb-2">
                   Select Playlist
                 </label>
-                <select
-                  value={config.playlistId || ''}
-                  onChange={(e) => updateConfig({ playlistId: e.target.value })}
-                  className="w-full bg-white/10 border border-white/20 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-blue-500"
-                >
-                  <option value="">Select a playlist...</option>
-                  <option value="default">Default Lofi Playlist</option>
-                  <option value="custom1">My Custom Playlist</option>
-                </select>
+                {isLoadingPlaylists ? (
+                  <div className="flex items-center justify-center py-3">
+                    <Loader2 className="w-5 h-5 text-blue-400 animate-spin mr-2" />
+                    <span className="text-gray-400">Loading playlists...</span>
+                  </div>
+                ) : (
+                  <select
+                    value={config.playlistId || ''}
+                    onChange={(e) => updateConfig({ playlistId: e.target.value })}
+                    className="w-full bg-white/10 border border-white/20 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="">Select a playlist...</option>
+                    {availablePlaylists.map((playlist: any) => (
+                      <option key={playlist.id} value={playlist.id}>
+                        {playlist.name} ({playlist.itemCount} items)
+                      </option>
+                    ))}
+                  </select>
+                )}
+                
+                {availablePlaylists.length === 0 && !isLoadingPlaylists && (
+                  <p className="text-gray-400 text-sm mt-2">
+                    No playlists found. Create a playlist in the Playlist tab first.
+                  </p>
+                )}
               </div>
               
               <div className="flex items-center justify-between">

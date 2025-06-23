@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
 import path from 'path';
+import { Database } from '../utils/Database.js';
 
 export class PlaylistManager extends EventEmitter {
   constructor(logger) {
@@ -20,57 +21,14 @@ export class PlaylistManager extends EventEmitter {
 
   async loadPlaylist(playlistId, options = {}) {
     try {
-      // In a real implementation, this would load from database
-      // For now, we'll create a mock playlist
-      this.currentPlaylist = {
-        id: playlistId,
-        name: 'Lofi Playlist',
-        items: [
-          {
-            id: '1',
-            name: 'Lofi Scene 1',
-            video: {
-              id: 'v1',
-              name: 'City Rain',
-              url: '/uploads/lofi-city-rain.mp4',
-              duration: 300,
-              loop: true
-            },
-            audio: {
-              id: 'a1',
-              name: 'Chill Beats 1',
-              url: '/uploads/chill-beats-1.mp3',
-              duration: 180,
-              loop: true,
-              volume: 0.8
-            },
-            duration: 300,
-            order: 0
-          },
-          {
-            id: '2',
-            name: 'Lofi Scene 2',
-            video: {
-              id: 'v2',
-              name: 'Forest Study',
-              url: '/uploads/lofi-forest.mp4',
-              duration: 240,
-              loop: true
-            },
-            audio: {
-              id: 'a2',
-              name: 'Jazz Hop',
-              url: '/uploads/jazz-hop.mp3',
-              duration: 200,
-              loop: true,
-              volume: 0.7
-            },
-            duration: 240,
-            order: 1
-          }
-        ]
-      };
+      // Load playlist from database
+      const playlist = Database.getPlaylist(playlistId);
+      
+      if (!playlist) {
+        throw new Error(`Playlist with ID ${playlistId} not found`);
+      }
 
+      this.currentPlaylist = playlist;
       this.shuffleMode = options.shuffle || false;
       this.loopMode = options.loop !== false;
       this.currentItemIndex = 0;
@@ -161,7 +119,12 @@ export class PlaylistManager extends EventEmitter {
 
       // Add video input
       if (videoInput) {
-        command = command.input(videoInput);
+        // Convert relative URL to absolute file path
+        const videoPath = videoInput.startsWith('/uploads/') 
+          ? path.join(process.cwd(), 'server', videoInput)
+          : videoInput;
+        
+        command = command.input(videoPath);
         if (item.video.loop) {
           command = command.inputOptions(['-stream_loop', '-1']);
         }
@@ -169,7 +132,12 @@ export class PlaylistManager extends EventEmitter {
 
       // Add audio input
       if (audioInput) {
-        command = command.input(audioInput);
+        // Convert relative URL to absolute file path
+        const audioPath = audioInput.startsWith('/uploads/') 
+          ? path.join(process.cwd(), 'server', audioInput)
+          : audioInput;
+        
+        command = command.input(audioPath);
         if (item.audio.loop) {
           command = command.inputOptions(['-stream_loop', '-1']);
         }

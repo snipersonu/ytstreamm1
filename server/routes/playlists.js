@@ -1,5 +1,6 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
+import { Database } from '../utils/Database.js';
 
 const router = express.Router();
 
@@ -8,21 +9,25 @@ router.post('/', authenticateToken, async (req, res) => {
   try {
     const { name, items } = req.body;
     
-    if (!name || !items) {
-      return res.status(400).json({ error: 'Name and items are required' });
+    if (!name) {
+      return res.status(400).json({ error: 'Playlist name is required' });
     }
 
     const playlistData = {
       id: Date.now().toString(),
       name,
-      items,
+      items: items || [],
       userId: req.user.id,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
-    // In a real implementation, save to database
-    // const playlist = await db.playlists.create(playlistData);
+    // Save to database
+    const success = Database.addPlaylist(playlistData);
+    
+    if (!success) {
+      return res.status(500).json({ error: 'Failed to save playlist' });
+    }
 
     res.json({
       message: 'Playlist created successfully',
@@ -38,32 +43,20 @@ router.post('/', authenticateToken, async (req, res) => {
 // Get user's playlists
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    // In a real implementation, fetch from database
-    // const playlists = await db.playlists.findAll({
-    //   where: { userId: req.user.id }
-    // });
+    // Get playlists from database
+    const playlists = Database.getPlaylists(req.user.id);
+    
+    // Add summary information
+    const playlistSummaries = playlists.map(playlist => ({
+      id: playlist.id,
+      name: playlist.name,
+      itemCount: playlist.items ? playlist.items.length : 0,
+      duration: playlist.items ? playlist.items.reduce((total, item) => total + (item.duration || 0), 0) : 0,
+      createdAt: playlist.createdAt,
+      updatedAt: playlist.updatedAt
+    }));
 
-    // Mock data for demonstration
-    const mockPlaylists = [
-      {
-        id: 'default',
-        name: 'Default Lofi Playlist',
-        itemCount: 5,
-        duration: 1200,
-        createdAt: new Date('2024-01-01'),
-        updatedAt: new Date('2024-01-15')
-      },
-      {
-        id: 'custom1',
-        name: 'My Custom Playlist',
-        itemCount: 3,
-        duration: 800,
-        createdAt: new Date('2024-01-10'),
-        updatedAt: new Date('2024-01-20')
-      }
-    ];
-
-    res.json({ playlists: mockPlaylists });
+    res.json({ playlists: playlistSummaries });
 
   } catch (error) {
     console.error('Error fetching playlists:', error);
@@ -76,43 +69,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // In a real implementation, fetch from database
-    // const playlist = await db.playlists.findOne({
-    //   where: { id, userId: req.user.id },
-    //   include: ['items']
-    // });
+    // Get playlist from database
+    const playlist = Database.getPlaylist(id, req.user.id);
+    
+    if (!playlist) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
 
-    // Mock data for demonstration
-    const mockPlaylist = {
-      id,
-      name: 'Default Lofi Playlist',
-      items: [
-        {
-          id: '1',
-          name: 'Lofi Scene 1',
-          video: {
-            id: 'v1',
-            name: 'City Rain',
-            url: '/uploads/video/lofi-city-rain.mp4',
-            duration: 300
-          },
-          audio: {
-            id: 'a1',
-            name: 'Chill Beats 1',
-            url: '/uploads/audio/chill-beats-1.mp3',
-            duration: 180,
-            loop: true,
-            volume: 0.8
-          },
-          duration: 300,
-          order: 0
-        }
-      ],
-      createdAt: new Date('2024-01-01'),
-      updatedAt: new Date('2024-01-15')
-    };
-
-    res.json({ playlist: mockPlaylist });
+    res.json({ playlist });
 
   } catch (error) {
     console.error('Error fetching playlist:', error);
@@ -126,18 +90,20 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const { name, items } = req.body;
     
-    // In a real implementation, update in database
-    // const playlist = await db.playlists.findOne({
-    //   where: { id, userId: req.user.id }
-    // });
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (items !== undefined) updates.items = items;
     
-    // if (!playlist) {
-    //   return res.status(404).json({ error: 'Playlist not found' });
-    // }
+    const updatedPlaylist = Database.updatePlaylist(id, updates, req.user.id);
     
-    // await playlist.update({ name, items, updatedAt: new Date() });
+    if (!updatedPlaylist) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
 
-    res.json({ message: 'Playlist updated successfully' });
+    res.json({ 
+      message: 'Playlist updated successfully',
+      playlist: updatedPlaylist
+    });
 
   } catch (error) {
     console.error('Error updating playlist:', error);
@@ -150,16 +116,11 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // In a real implementation, delete from database
-    // const playlist = await db.playlists.findOne({
-    //   where: { id, userId: req.user.id }
-    // });
+    const deletedPlaylist = Database.deletePlaylist(id, req.user.id);
     
-    // if (!playlist) {
-    //   return res.status(404).json({ error: 'Playlist not found' });
-    // }
-    
-    // await playlist.destroy();
+    if (!deletedPlaylist) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
 
     res.json({ message: 'Playlist deleted successfully' });
 
