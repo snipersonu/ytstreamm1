@@ -7,7 +7,7 @@ const router = express.Router();
 // Create playlist
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { name, items } = req.body;
+    const { name, items, backgroundVideo } = req.body;
     
     if (!name) {
       return res.status(400).json({ error: 'Playlist name is required' });
@@ -17,6 +17,7 @@ router.post('/', authenticateToken, async (req, res) => {
       id: Date.now().toString(),
       name,
       items: items || [],
+      backgroundVideo: backgroundVideo || null, // Single video that loops in background
       userId: req.user.id,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -52,6 +53,7 @@ router.get('/', authenticateToken, async (req, res) => {
       name: playlist.name,
       itemCount: playlist.items ? playlist.items.length : 0,
       duration: playlist.items ? playlist.items.reduce((total, item) => total + (item.duration || 0), 0) : 0,
+      backgroundVideo: playlist.backgroundVideo,
       createdAt: playlist.createdAt,
       updatedAt: playlist.updatedAt
     }));
@@ -88,11 +90,12 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, items } = req.body;
+    const { name, items, backgroundVideo } = req.body;
     
     const updates = {};
     if (name !== undefined) updates.name = name;
     if (items !== undefined) updates.items = items;
+    if (backgroundVideo !== undefined) updates.backgroundVideo = backgroundVideo;
     
     const updatedPlaylist = Database.updatePlaylist(id, updates, req.user.id);
     

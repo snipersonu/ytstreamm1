@@ -21,6 +21,9 @@ import {
   Save,
   X,
   Loader2,
+  Image,
+  FileVideo,
+  FileAudio,
 } from 'lucide-react';
 
 interface MediaItem {
@@ -35,30 +38,31 @@ interface MediaItem {
   enabled: boolean;
 }
 
-interface PlaylistItem {
+interface AudioPlaylistItem {
   id: string;
-  video: MediaItem | null;
-  audio: MediaItem | null;
-  duration: number;
   name: string;
+  audio: MediaItem;
+  duration: number;
   order: number;
+  volume: number;
 }
 
 export default function PlaylistManager() {
   const { user } = useAuth();
-  const [playlist, setPlaylist] = useState<PlaylistItem[]>([]);
+  const [audioItems, setAudioItems] = useState<AudioPlaylistItem[]>([]);
+  const [backgroundVideo, setBackgroundVideo] = useState<MediaItem | null>(null);
   const [mediaLibrary, setMediaLibrary] = useState<MediaItem[]>([]);
-  const [currentItem, setCurrentItem] = useState<PlaylistItem | null>(null);
+  const [currentItem, setCurrentItem] = useState<AudioPlaylistItem | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showMediaUpload, setShowMediaUpload] = useState(false);
   const [uploadType, setUploadType] = useState<'video' | 'audio'>('video');
   const [isUploading, setIsUploading] = useState(false);
-  const [editingItem, setEditingItem] = useState<PlaylistItem | null>(null);
-  const [draggedItem, setDraggedItem] = useState<PlaylistItem | null>(null);
+  const [draggedItem, setDraggedItem] = useState<AudioPlaylistItem | null>(null);
   const [currentPlaylistId, setCurrentPlaylistId] = useState<string | null>(null);
-  const [playlistName, setPlaylistName] = useState('My Playlist');
+  const [playlistName, setPlaylistName] = useState('My Lofi Playlist');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'videos' | 'audios'>('videos');
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -125,7 +129,8 @@ export default function PlaylistManager() {
 
       if (response.ok) {
         const data = await response.json();
-        setPlaylist(data.playlist.items || []);
+        setAudioItems(data.playlist.items || []);
+        setBackgroundVideo(data.playlist.backgroundVideo || null);
         setPlaylistName(data.playlist.name);
         setCurrentPlaylistId(playlistId);
       }
@@ -181,65 +186,63 @@ export default function PlaylistManager() {
     }
   };
 
-  const createPlaylistItem = () => {
-    const newItem: PlaylistItem = {
+  const createAudioItem = () => {
+    const newItem: AudioPlaylistItem = {
       id: Date.now().toString(),
-      video: null,
+      name: `Audio Track ${audioItems.length + 1}`,
       audio: null,
       duration: 0,
-      name: `Item ${playlist.length + 1}`,
-      order: playlist.length,
+      order: audioItems.length,
+      volume: 1.0,
     };
     
-    setPlaylist(prev => [...prev, newItem]);
-    setEditingItem(newItem);
+    setAudioItems(prev => [...prev, newItem]);
   };
 
-  const updatePlaylistItem = (itemId: string, updates: Partial<PlaylistItem>) => {
-    setPlaylist(prev => prev.map(item => 
+  const updateAudioItem = (itemId: string, updates: Partial<AudioPlaylistItem>) => {
+    setAudioItems(prev => prev.map(item => 
       item.id === itemId ? { ...item, ...updates } : item
     ));
   };
 
-  const deletePlaylistItem = (itemId: string) => {
-    setPlaylist(prev => prev.filter(item => item.id !== itemId));
+  const deleteAudioItem = (itemId: string) => {
+    setAudioItems(prev => prev.filter(item => item.id !== itemId));
     if (currentItem?.id === itemId) {
       setCurrentItem(null);
       setIsPlaying(false);
     }
   };
 
-  const reorderPlaylist = (dragIndex: number, hoverIndex: number) => {
-    const draggedItem = playlist[dragIndex];
-    const newPlaylist = [...playlist];
-    newPlaylist.splice(dragIndex, 1);
-    newPlaylist.splice(hoverIndex, 0, draggedItem);
+  const reorderAudioItems = (dragIndex: number, hoverIndex: number) => {
+    const draggedItem = audioItems[dragIndex];
+    const newItems = [...audioItems];
+    newItems.splice(dragIndex, 1);
+    newItems.splice(hoverIndex, 0, draggedItem);
     
     // Update order numbers
-    const reorderedPlaylist = newPlaylist.map((item, index) => ({
+    const reorderedItems = newItems.map((item, index) => ({
       ...item,
       order: index,
     }));
     
-    setPlaylist(reorderedPlaylist);
+    setAudioItems(reorderedItems);
   };
 
-  const playItem = (item: PlaylistItem) => {
+  const playItem = (item: AudioPlaylistItem) => {
     setCurrentItem(item);
     setIsPlaying(true);
     
-    // Load video if available
-    if (item.video && videoRef.current) {
-      videoRef.current.src = item.video.url;
+    // Load background video if available
+    if (backgroundVideo && videoRef.current) {
+      videoRef.current.src = backgroundVideo.url;
       videoRef.current.load();
       videoRef.current.play();
     }
     
-    // Load audio if available
+    // Load audio
     if (item.audio && audioRef.current) {
       audioRef.current.src = item.audio.url;
-      audioRef.current.volume = item.audio.volume;
-      audioRef.current.loop = item.audio.loop;
+      audioRef.current.volume = item.volume;
       audioRef.current.load();
       audioRef.current.play();
     }
@@ -259,16 +262,16 @@ export default function PlaylistManager() {
 
   const nextItem = () => {
     if (!currentItem) return;
-    const currentIndex = playlist.findIndex(item => item.id === currentItem.id);
-    const nextIndex = (currentIndex + 1) % playlist.length;
-    playItem(playlist[nextIndex]);
+    const currentIndex = audioItems.findIndex(item => item.id === currentItem.id);
+    const nextIndex = (currentIndex + 1) % audioItems.length;
+    playItem(audioItems[nextIndex]);
   };
 
   const previousItem = () => {
     if (!currentItem) return;
-    const currentIndex = playlist.findIndex(item => item.id === currentItem.id);
-    const prevIndex = currentIndex === 0 ? playlist.length - 1 : currentIndex - 1;
-    playItem(playlist[prevIndex]);
+    const currentIndex = audioItems.findIndex(item => item.id === currentItem.id);
+    const prevIndex = currentIndex === 0 ? audioItems.length - 1 : currentIndex - 1;
+    playItem(audioItems[prevIndex]);
   };
 
   const savePlaylist = async () => {
@@ -277,7 +280,8 @@ export default function PlaylistManager() {
       
       const playlistData = {
         name: playlistName,
-        items: playlist,
+        items: audioItems,
+        backgroundVideo: backgroundVideo,
       };
 
       let response;
@@ -322,6 +326,9 @@ export default function PlaylistManager() {
     }
   };
 
+  const videoLibrary = mediaLibrary.filter(item => item.type === 'video');
+  const audioLibrary = mediaLibrary.filter(item => item.type === 'audio');
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -338,7 +345,7 @@ export default function PlaylistManager() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <h2 className="text-2xl font-bold text-white">Playlist Manager</h2>
+          <h2 className="text-2xl font-bold text-white">Lofi Playlist Manager</h2>
           <input
             type="text"
             value={playlistName}
@@ -356,11 +363,11 @@ export default function PlaylistManager() {
             <span>Upload Media</span>
           </button>
           <button
-            onClick={createPlaylistItem}
+            onClick={createAudioItem}
             className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
           >
             <Plus className="w-4 h-4" />
-            <span>Add Item</span>
+            <span>Add Audio</span>
           </button>
           <button
             onClick={savePlaylist}
@@ -392,11 +399,12 @@ export default function PlaylistManager() {
                 muted={false}
                 onEnded={nextItem}
               />
-              {!currentItem?.video && (
+              {!backgroundVideo && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
                     <Video className="w-16 h-16 text-gray-500 mx-auto mb-4" />
-                    <p className="text-gray-400">No video selected</p>
+                    <p className="text-gray-400">No background video selected</p>
+                    <p className="text-gray-500 text-sm">Select a video from your library</p>
                   </div>
                 </div>
               )}
@@ -450,14 +458,12 @@ export default function PlaylistManager() {
                     min="0"
                     max="1"
                     step="0.1"
-                    value={currentItem?.audio?.volume || 1}
+                    value={currentItem?.volume || 1}
                     onChange={(e) => {
                       const volume = parseFloat(e.target.value);
                       if (audioRef.current) audioRef.current.volume = volume;
-                      if (currentItem?.audio) {
-                        updatePlaylistItem(currentItem.id, {
-                          audio: { ...currentItem.audio, volume }
-                        });
+                      if (currentItem) {
+                        updateAudioItem(currentItem.id, { volume });
                       }
                     }}
                     className="w-20"
@@ -465,25 +471,28 @@ export default function PlaylistManager() {
                 </div>
               </div>
 
-              {currentItem && (
-                <div className="text-center">
-                  <p className="text-white font-medium">{currentItem.name}</p>
-                  <div className="flex items-center justify-center space-x-4 mt-2 text-sm text-gray-400">
-                    {currentItem.video && (
-                      <span className="flex items-center space-x-1">
-                        <Video className="w-4 h-4" />
-                        <span>{currentItem.video.name}</span>
-                      </span>
-                    )}
+              {/* Current Playing Info */}
+              <div className="text-center">
+                {backgroundVideo && (
+                  <div className="mb-2">
+                    <p className="text-blue-400 text-sm flex items-center justify-center space-x-1">
+                      <Video className="w-4 h-4" />
+                      <span>Background: {backgroundVideo.name}</span>
+                    </p>
+                  </div>
+                )}
+                {currentItem && (
+                  <div>
+                    <p className="text-white font-medium">{currentItem.name}</p>
                     {currentItem.audio && (
-                      <span className="flex items-center space-x-1">
+                      <p className="text-gray-400 text-sm flex items-center justify-center space-x-1 mt-1">
                         <Music className="w-4 h-4" />
                         <span>{currentItem.audio.name}</span>
-                      </span>
+                      </p>
                     )}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -492,51 +501,137 @@ export default function PlaylistManager() {
         <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
           <h3 className="text-lg font-semibold text-white mb-4">Media Library</h3>
           
+          {/* Tab Selector */}
+          <div className="flex bg-white/10 rounded-lg p-1 mb-4">
+            <button
+              onClick={() => setActiveTab('videos')}
+              className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-all ${
+                activeTab === 'videos'
+                  ? 'bg-blue-600 text-white shadow-lg'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <FileVideo className="w-4 h-4 inline mr-2" />
+              Videos ({videoLibrary.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('audios')}
+              className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-all ${
+                activeTab === 'audios'
+                  ? 'bg-green-600 text-white shadow-lg'
+                  : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <FileAudio className="w-4 h-4 inline mr-2" />
+              Audios ({audioLibrary.length})
+            </button>
+          </div>
+          
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {mediaLibrary.map((media) => (
-              <div
-                key={media.id}
-                className="bg-white/10 rounded-lg p-3 cursor-pointer hover:bg-white/20 transition-colors"
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('media', JSON.stringify(media));
-                }}
-              >
-                <div className="flex items-center space-x-3">
-                  {media.type === 'video' ? (
-                    <Video className="w-5 h-5 text-blue-400" />
-                  ) : (
-                    <Music className="w-5 h-5 text-green-400" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white text-sm font-medium truncate">{media.name}</p>
-                    <p className="text-gray-400 text-xs">{media.type}</p>
+            {activeTab === 'videos' ? (
+              <>
+                {videoLibrary.map((media) => (
+                  <div
+                    key={media.id}
+                    className={`bg-white/10 rounded-lg p-3 cursor-pointer hover:bg-white/20 transition-colors border-2 ${
+                      backgroundVideo?.id === media.id ? 'border-blue-500 bg-blue-500/20' : 'border-transparent'
+                    }`}
+                    onClick={() => setBackgroundVideo(media)}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Video className="w-5 h-5 text-blue-400" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium truncate">{media.name}</p>
+                        <p className="text-gray-400 text-xs">Background Video</p>
+                      </div>
+                      {backgroundVideo?.id === media.id && (
+                        <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-1">
-                    {media.loop && <Repeat className="w-3 h-3 text-yellow-400" />}
-                    {!media.enabled && <EyeOff className="w-3 h-3 text-gray-500" />}
+                ))}
+                
+                {videoLibrary.length === 0 && (
+                  <div className="text-center py-8">
+                    <Video className="w-12 h-12 text-gray-500 mx-auto mb-2" />
+                    <p className="text-gray-400">No videos uploaded</p>
+                    <p className="text-gray-500 text-sm">Upload videos for backgrounds</p>
                   </div>
-                </div>
-              </div>
-            ))}
-            
-            {mediaLibrary.length === 0 && (
-              <div className="text-center py-8">
-                <Music className="w-12 h-12 text-gray-500 mx-auto mb-2" />
-                <p className="text-gray-400">No media files uploaded</p>
-                <p className="text-gray-500 text-sm">Upload videos and audio to get started</p>
-              </div>
+                )}
+              </>
+            ) : (
+              <>
+                {audioLibrary.map((media) => (
+                  <div
+                    key={media.id}
+                    className="bg-white/10 rounded-lg p-3 cursor-pointer hover:bg-white/20 transition-colors"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('audio', JSON.stringify(media));
+                    }}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <Music className="w-5 h-5 text-green-400" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium truncate">{media.name}</p>
+                        <p className="text-gray-400 text-xs">Drag to playlist</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                
+                {audioLibrary.length === 0 && (
+                  <div className="text-center py-8">
+                    <Music className="w-12 h-12 text-gray-500 mx-auto mb-2" />
+                    <p className="text-gray-400">No audio files uploaded</p>
+                    <p className="text-gray-500 text-sm">Upload audio for playlist</p>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
       </div>
 
-      {/* Playlist */}
+      {/* Background Video Selection */}
       <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Playlist ({playlist.length} items)</h3>
+        <h3 className="text-lg font-semibold text-white mb-4">Background Video</h3>
+        
+        {backgroundVideo ? (
+          <div className="bg-blue-500/20 border border-blue-500/30 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <Video className="w-6 h-6 text-blue-400" />
+                <div>
+                  <p className="text-white font-medium">{backgroundVideo.name}</p>
+                  <p className="text-blue-400 text-sm">This video will loop continuously during the stream</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBackgroundVideo(null)}
+                className="text-red-400 hover:text-red-300 p-2 rounded-lg hover:bg-red-500/20 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="border-2 border-dashed border-gray-500 rounded-lg p-8 text-center">
+            <Video className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+            <p className="text-gray-400 text-lg font-medium">No Background Video Selected</p>
+            <p className="text-gray-500 text-sm mt-2">
+              Select a video from your library to use as the looping background
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Audio Playlist */}
+      <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
+        <h3 className="text-lg font-semibold text-white mb-4">Audio Playlist ({audioItems.length} tracks)</h3>
         
         <div className="space-y-2">
-          {playlist.map((item, index) => (
+          {audioItems.map((item, index) => (
             <div
               key={item.id}
               className={`bg-white/10 rounded-lg p-4 border-2 border-transparent hover:border-white/20 transition-all ${
@@ -548,24 +643,20 @@ export default function PlaylistManager() {
               onDrop={(e) => {
                 e.preventDefault();
                 if (draggedItem) {
-                  const dragIndex = playlist.findIndex(p => p.id === draggedItem.id);
-                  reorderPlaylist(dragIndex, index);
+                  const dragIndex = audioItems.findIndex(p => p.id === draggedItem.id);
+                  reorderAudioItems(dragIndex, index);
                   setDraggedItem(null);
                 }
                 
-                // Handle media drop
-                const mediaData = e.dataTransfer.getData('media');
-                if (mediaData) {
-                  const media: MediaItem = JSON.parse(mediaData);
-                  const updates: Partial<PlaylistItem> = {};
-                  
-                  if (media.type === 'video') {
-                    updates.video = media;
-                  } else {
-                    updates.audio = media;
-                  }
-                  
-                  updatePlaylistItem(item.id, updates);
+                // Handle audio drop
+                const audioData = e.dataTransfer.getData('audio');
+                if (audioData) {
+                  const audio: MediaItem = JSON.parse(audioData);
+                  updateAudioItem(item.id, { 
+                    audio,
+                    name: audio.name,
+                    duration: audio.duration || 0
+                  });
                 }
               }}
             >
@@ -578,78 +669,60 @@ export default function PlaylistManager() {
                     <input
                       type="text"
                       value={item.name}
-                      onChange={(e) => updatePlaylistItem(item.id, { name: e.target.value })}
+                      onChange={(e) => updateAudioItem(item.id, { name: e.target.value })}
                       className="bg-transparent text-white font-medium border-none outline-none flex-1"
                     />
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* Video Slot */}
-                    <div className={`border-2 border-dashed rounded-lg p-3 ${
-                      item.video ? 'border-blue-500 bg-blue-500/10' : 'border-gray-500'
-                    }`}>
-                      {item.video ? (
-                        <div className="flex items-center space-x-2">
-                          <Video className="w-4 h-4 text-blue-400" />
-                          <span className="text-white text-sm truncate">{item.video.name}</span>
-                          <button
-                            onClick={() => updatePlaylistItem(item.id, { video: null })}
-                            className="text-red-400 hover:text-red-300"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="text-center">
-                          <Video className="w-6 h-6 text-gray-400 mx-auto mb-1" />
-                          <p className="text-gray-400 text-xs">Drop video here</p>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Audio Slot */}
-                    <div className={`border-2 border-dashed rounded-lg p-3 ${
-                      item.audio ? 'border-green-500 bg-green-500/10' : 'border-gray-500'
-                    }`}>
-                      {item.audio ? (
+                  {/* Audio Slot */}
+                  <div className={`border-2 border-dashed rounded-lg p-3 ${
+                    item.audio ? 'border-green-500 bg-green-500/10' : 'border-gray-500'
+                  }`}>
+                    {item.audio ? (
+                      <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-2">
                           <Music className="w-4 h-4 text-green-400" />
                           <span className="text-white text-sm truncate">{item.audio.name}</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Volume2 className="w-3 h-3 text-gray-400" />
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.1"
+                            value={item.volume}
+                            onChange={(e) => updateAudioItem(item.id, { volume: parseFloat(e.target.value) })}
+                            className="w-16"
+                          />
                           <button
-                            onClick={() => updatePlaylistItem(item.id, { audio: null })}
+                            onClick={() => updateAudioItem(item.id, { audio: null })}
                             className="text-red-400 hover:text-red-300"
                           >
                             <X className="w-3 h-3" />
                           </button>
                         </div>
-                      ) : (
-                        <div className="text-center">
-                          <Music className="w-6 h-6 text-gray-400 mx-auto mb-1" />
-                          <p className="text-gray-400 text-xs">Drop audio here</p>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <Music className="w-6 h-6 text-gray-400 mx-auto mb-1" />
+                        <p className="text-gray-400 text-xs">Drop audio here</p>
+                      </div>
+                    )}
                   </div>
                 </div>
                 
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => playItem(item)}
-                    disabled={!item.video && !item.audio}
+                    disabled={!item.audio || !backgroundVideo}
                     className="p-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
                   >
                     <Play className="w-4 h-4 text-white" />
                   </button>
                   
                   <button
-                    onClick={() => setEditingItem(item)}
-                    className="p-2 rounded-lg bg-gray-600 hover:bg-gray-700 transition-colors"
-                  >
-                    <Settings className="w-4 h-4 text-white" />
-                  </button>
-                  
-                  <button
-                    onClick={() => deletePlaylistItem(item.id)}
+                    onClick={() => deleteAudioItem(item.id)}
                     className="p-2 rounded-lg bg-red-600 hover:bg-red-700 transition-colors"
                   >
                     <Trash2 className="w-4 h-4 text-white" />
@@ -659,11 +732,11 @@ export default function PlaylistManager() {
             </div>
           ))}
           
-          {playlist.length === 0 && (
+          {audioItems.length === 0 && (
             <div className="text-center py-12">
               <Plus className="w-16 h-16 text-gray-500 mx-auto mb-4" />
-              <p className="text-gray-400 text-lg">No playlist items</p>
-              <p className="text-gray-500">Add items to create your lofi-style stream</p>
+              <p className="text-gray-400 text-lg">No audio tracks</p>
+              <p className="text-gray-500">Add audio tracks to create your lofi playlist</p>
             </div>
           )}
         </div>

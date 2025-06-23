@@ -18,6 +18,7 @@ interface StreamConfig {
   youtubeStreamKey: string;
   videoSource: string;
   videoFile: { name: string; path: string; } | null;
+  selectedVideoId: string; // For selecting from media library
   quality: '720p' | '1080p';
   bitrate: number;
   fps: number;
@@ -58,6 +59,7 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     youtubeStreamKey: '',
     videoSource: '',
     videoFile: null,
+    selectedVideoId: '',
     quality: '1080p',
     bitrate: 3000,
     fps: 30,
@@ -116,7 +118,7 @@ export function StreamProvider({ children }: { children: ReactNode }) {
           setStatus(prev => ({
             ...prev,
             currentPlaylistItem: data.payload.currentItem,
-            playlistLength: data.payload.totalItems,
+            playlistLength: data.payload.total,
           }));
           break;
       }
@@ -172,7 +174,7 @@ export function StreamProvider({ children }: { children: ReactNode }) {
         return;
       }
     } else {
-      if (!streamConfig.videoSource && !streamConfig.videoFile) {
+      if (!streamConfig.videoSource && !streamConfig.videoFile && !streamConfig.selectedVideoId) {
         addLog('ERROR: Video source is required. Please select a video source.');
         return;
       }
@@ -184,9 +186,9 @@ export function StreamProvider({ children }: { children: ReactNode }) {
     }));
     
     if (streamConfig.streamType === 'playlist') {
-      addLog('Starting playlist stream...');
+      addLog('Starting lofi playlist stream...');
     } else {
-      addLog('Starting stream...');
+      addLog('Starting single video stream...');
     }
   };
 

@@ -19,24 +19,34 @@ import {
   Music,
   Settings as SettingsIcon,
   X,
+  FileVideo,
+  Headphones,
 } from 'lucide-react';
 
 export default function StreamingDashboard() {
   const { status, config, logs, startStream, stopStream, restartStream, updateConfig } = useStream();
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [videoSource, setVideoSource] = useState('playlist');
+  const [streamMode, setStreamMode] = useState<'single' | 'playlist'>('single');
   const [isUploading, setIsUploading] = useState(false);
   const [showPlaylistSettings, setShowPlaylistSettings] = useState(false);
   const [availablePlaylists, setAvailablePlaylists] = useState([]);
   const [isLoadingPlaylists, setIsLoadingPlaylists] = useState(false);
+  const [availableVideos, setAvailableVideos] = useState([]);
+  const [isLoadingVideos, setIsLoadingVideos] = useState(false);
 
-  // Load available playlists when playlist settings modal opens
+  // Load available playlists and videos when modals open
   useEffect(() => {
     if (showPlaylistSettings) {
       loadAvailablePlaylists();
     }
   }, [showPlaylistSettings]);
+
+  useEffect(() => {
+    if (streamMode === 'single') {
+      loadAvailableVideos();
+    }
+  }, [streamMode]);
 
   const loadAvailablePlaylists = async () => {
     try {
@@ -55,6 +65,26 @@ export default function StreamingDashboard() {
       console.error('Error loading playlists:', error);
     } finally {
       setIsLoadingPlaylists(false);
+    }
+  };
+
+  const loadAvailableVideos = async () => {
+    try {
+      setIsLoadingVideos(true);
+      const response = await fetch('/api/media/library?type=video', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAvailableVideos(data.media);
+      }
+    } catch (error) {
+      console.error('Error loading videos:', error);
+    } finally {
+      setIsLoadingVideos(false);
     }
   };
 
@@ -127,23 +157,36 @@ export default function StreamingDashboard() {
   };
 
   const canStartStream = () => {
-    return config.youtubeStreamKey && 
-           config.youtubeStreamKey.trim().length > 10 && 
-           (config.videoSource || config.videoFile || config.playlistId);
+    if (!config.youtubeStreamKey || config.youtubeStreamKey.trim().length <= 10) {
+      return false;
+    }
+
+    if (streamMode === 'playlist') {
+      return config.playlistId;
+    } else {
+      return config.videoSource || config.videoFile || config.selectedVideoId;
+    }
   };
 
-  const startStreamWithPlaylist = async () => {
-    if (videoSource === 'playlist' && config.playlistId) {
-      // Start stream with playlist configuration
-      await startStream({
-        ...config,
-        streamType: 'playlist',
-        playlistId: config.playlistId,
-      });
+  const startStreamWithConfig = async () => {
+    const streamConfig = {
+      ...config,
+      streamType: streamMode,
+    };
+
+    if (streamMode === 'playlist') {
+      streamConfig.playlistId = config.playlistId;
     } else {
-      // Start regular stream
-      await startStream();
+      // For single video mode, use selected video from library if available
+      if (config.selectedVideoId) {
+        const selectedVideo = availableVideos.find(v => v.id === config.selectedVideoId);
+        if (selectedVideo) {
+          streamConfig.videoSource = selectedVideo.url;
+        }
+      }
     }
+
+    await startStream(streamConfig);
   };
 
   return (
@@ -204,10 +247,16 @@ export default function StreamingDashboard() {
                   <div className="w-16 h-16 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                   <p className="text-white font-medium">Streaming Live</p>
                   <p className="text-gray-400 text-sm">{status.fps} FPS • {status.bitrate} kbps</p>
-                  {config.streamType === 'playlist' && (
+                  {status.streamType === 'playlist' && (
                     <div className="mt-2 flex items-center justify-center space-x-2">
-                      <List className="w-4 h-4 text-blue-400" />
-                      <span className="text-blue-400 text-sm">Playlist Mode</span>
+                      <List className="w-4 h-4 text-purple-400" />
+                      <span className="text-purple-400 text-sm">Lofi Playlist Mode</span>
+                    </div>
+                  )}
+                  {status.streamType === 'single' && (
+                    <div className="mt-2 flex items-center justify-center space-x-2">
+                      <FileVideo className="w-4 h-4 text-blue-400" />
+                      <span className="text-blue-400 text-sm">Single Video Mode</span>
                     </div>
                   )}
                 </div>
@@ -215,24 +264,27 @@ export default function StreamingDashboard() {
                 <div className="text-center">
                   <Video className="w-16 h-16 text-gray-500 mx-auto mb-4" />
                   <p className="text-gray-400">Stream Preview</p>
-                  {videoSource === 'playlist' && (
-                    <p className="text-blue-400 text-sm mt-2">Lofi-style playlist streaming</p>
+                  {streamMode === 'playlist' && (
+                    <p className="text-purple-400 text-sm mt-2">Lofi-style playlist streaming</p>
+                  )}
+                  {streamMode === 'single' && (
+                    <p className="text-blue-400 text-sm mt-2">Single video streaming</p>
                   )}
                 </div>
               )}
             </div>
 
             {/* Current Playing Info */}
-            {status.isStreaming && config.streamType === 'playlist' && status.currentPlaylistItem && (
+            {status.isStreaming && status.streamType === 'playlist' && status.currentPlaylistItem && (
               <div className="mt-4 bg-black/50 rounded-lg p-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-white font-medium">{status.currentPlaylistItem.name}</p>
                     <div className="flex items-center space-x-4 mt-1 text-sm text-gray-400">
-                      {status.currentPlaylistItem.video && (
+                      {status.currentPlaylistItem.backgroundVideo && (
                         <span className="flex items-center space-x-1">
                           <Video className="w-3 h-3" />
-                          <span>{status.currentPlaylistItem.video.name}</span>
+                          <span>BG: {status.currentPlaylistItem.backgroundVideo.name}</span>
                         </span>
                       )}
                       {status.currentPlaylistItem.audio && (
@@ -245,11 +297,9 @@ export default function StreamingDashboard() {
                   </div>
                   <div className="text-right">
                     <p className="text-white text-sm">
-                      {status.currentPlaylistItem.order + 1} / {status.playlistLength}
+                      {(status.currentPlaylistItem.order || 0) + 1} / {status.playlistLength}
                     </p>
-                    <p className="text-gray-400 text-xs">
-                      {status.currentPlaylistItem.audio?.loop ? 'Looping' : 'Single play'}
-                    </p>
+                    <p className="text-gray-400 text-xs">Lofi Playlist</p>
                   </div>
                 </div>
               </div>
@@ -259,6 +309,47 @@ export default function StreamingDashboard() {
 
         {/* Controls */}
         <div className="space-y-6">
+          {/* Stream Mode Selection */}
+          <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
+            <h3 className="text-lg font-semibold text-white mb-4">Stream Mode</h3>
+            
+            <div className="space-y-3">
+              <button
+                onClick={() => setStreamMode('single')}
+                className={`w-full p-4 rounded-lg border-2 transition-all ${
+                  streamMode === 'single'
+                    ? 'border-blue-500 bg-blue-500/20'
+                    : 'border-white/20 hover:border-white/40'
+                }`}
+              >
+                <div className="flex items-center space-x-3">
+                  <FileVideo className="w-6 h-6 text-blue-400" />
+                  <div className="text-left">
+                    <p className="text-white font-medium">Single Video Stream</p>
+                    <p className="text-gray-400 text-sm">Stream one video with its original audio</p>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setStreamMode('playlist')}
+                className={`w-full p-4 rounded-lg border-2 transition-all ${
+                  streamMode === 'playlist'
+                    ? 'border-purple-500 bg-purple-500/20'
+                    : 'border-white/20 hover:border-white/40'
+                }`}
+              >
+                <div className="flex items-center space-x-3">
+                  <Headphones className="w-6 h-6 text-purple-400" />
+                  <div className="text-left">
+                    <p className="text-white font-medium">Lofi Playlist Stream</p>
+                    <p className="text-gray-400 text-sm">Background video with multiple audio tracks</p>
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+
           {/* Stream Controls */}
           <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
             <h3 className="text-lg font-semibold text-white mb-4">Stream Controls</h3>
@@ -273,6 +364,8 @@ export default function StreamingDashboard() {
                 <p className="text-yellow-300 text-xs mt-1">
                   {!config.youtubeStreamKey || config.youtubeStreamKey.trim().length <= 10 
                     ? 'Enter YouTube Stream Key in Settings' 
+                    : streamMode === 'playlist'
+                    ? 'Select a playlist below'
                     : 'Select a video source below'}
                 </p>
               </div>
@@ -280,12 +373,12 @@ export default function StreamingDashboard() {
             
             <div className="space-y-3">
               <button
-                onClick={startStreamWithPlaylist}
+                onClick={startStreamWithConfig}
                 disabled={status.isStreaming || !canStartStream()}
                 className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
               >
                 <Play className="w-5 h-5" />
-                <span>Start Stream</span>
+                <span>Start {streamMode === 'playlist' ? 'Playlist' : 'Video'} Stream</span>
               </button>
               
               <button
@@ -308,78 +401,112 @@ export default function StreamingDashboard() {
             </div>
           </div>
 
-          {/* Video Source */}
+          {/* Source Configuration */}
           <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Video Source</h3>
+            <h3 className="text-lg font-semibold text-white mb-4">
+              {streamMode === 'playlist' ? 'Playlist Selection' : 'Video Source'}
+            </h3>
             
-            <div className="space-y-4">
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setVideoSource('playlist')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    videoSource === 'playlist'
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-white/10 text-gray-300 hover:bg-white/20'
-                  }`}
-                >
-                  <List className="w-4 h-4 inline mr-2" />
-                  Playlist
-                </button>
-                <button
-                  onClick={() => setVideoSource('file')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    videoSource === 'file'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white/10 text-gray-300 hover:bg-white/20'
-                  }`}
-                >
-                  File Upload
-                </button>
-                <button
-                  onClick={() => setVideoSource('url')}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    videoSource === 'url'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white/10 text-gray-300 hover:bg-white/20'
-                  }`}
-                >
-                  URL Stream
-                </button>
-              </div>
-
-              {videoSource === 'playlist' ? (
-                <div className="space-y-3">
-                  <div className="bg-purple-500/20 border border-purple-500/30 rounded-lg p-4">
-                    <div className="flex items-center space-x-3 mb-3">
-                      <List className="w-5 h-5 text-purple-400" />
-                      <span className="text-purple-400 font-medium">Lofi-Style Streaming</span>
+            {streamMode === 'playlist' ? (
+              <div className="space-y-3">
+                <div className="bg-purple-500/20 border border-purple-500/30 rounded-lg p-4">
+                  <div className="flex items-center space-x-3 mb-3">
+                    <List className="w-5 h-5 text-purple-400" />
+                    <span className="text-purple-400 font-medium">Lofi-Style Streaming</span>
+                  </div>
+                  <p className="text-gray-300 text-sm mb-3">
+                    Stream with a background video and multiple audio tracks that play in sequence.
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm">
+                      {config.playlistId ? (
+                        <div className="flex items-center space-x-2">
+                          <CheckCircle className="w-4 h-4 text-green-400" />
+                          <span className="text-green-400">Playlist selected</span>
+                        </div>
+                      ) : (
+                        <span className="text-gray-400">No playlist selected</span>
+                      )}
                     </div>
-                    <p className="text-gray-300 text-sm mb-3">
-                      Stream with video backgrounds and looping audio tracks, perfect for lofi music streams.
-                    </p>
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm">
-                        {config.playlistId ? (
-                          <div className="flex items-center space-x-2">
-                            <CheckCircle className="w-4 h-4 text-green-400" />
-                            <span className="text-green-400">Playlist configured</span>
-                          </div>
-                        ) : (
-                          <span className="text-gray-400">No playlist selected</span>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => setShowPlaylistSettings(true)}
-                        className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1 transition-colors"
-                      >
-                        <SettingsIcon className="w-3 h-3" />
-                        <span>Configure</span>
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => setShowPlaylistSettings(true)}
+                      className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-sm flex items-center space-x-1 transition-colors"
+                    >
+                      <SettingsIcon className="w-3 h-3" />
+                      <span>Select Playlist</span>
+                    </button>
                   </div>
                 </div>
-              ) : videoSource === 'file' ? (
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Video Library Selection */}
                 <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Select from Library
+                  </label>
+                  {isLoadingVideos ? (
+                    <div className="flex items-center justify-center py-3">
+                      <Loader2 className="w-5 h-5 text-blue-400 animate-spin mr-2" />
+                      <span className="text-gray-400">Loading videos...</span>
+                    </div>
+                  ) : (
+                    <select
+                      value={config.selectedVideoId || ''}
+                      onChange={(e) => {
+                        updateConfig({ 
+                          selectedVideoId: e.target.value,
+                          videoSource: '', // Clear URL when selecting from library
+                          videoFile: null // Clear uploaded file
+                        });
+                      }}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-blue-500"
+                    >
+                      <option value="">Select a video from your library...</option>
+                      {availableVideos.map((video: any) => (
+                        <option key={video.id} value={video.id}>
+                          {video.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  
+                  {availableVideos.length === 0 && !isLoadingVideos && (
+                    <p className="text-gray-400 text-sm mt-2">
+                      No videos in library. Upload videos in the Playlist tab.
+                    </p>
+                  )}
+                </div>
+
+                <div className="text-center text-gray-400 text-sm">OR</div>
+
+                {/* URL Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Video URL
+                  </label>
+                  <input
+                    type="url"
+                    placeholder="Enter video URL or RTMP stream"
+                    value={config.videoSource}
+                    onChange={(e) => {
+                      updateConfig({ 
+                        videoSource: e.target.value,
+                        videoFile: null, // Clear video file when URL is entered
+                        selectedVideoId: '' // Clear library selection
+                      });
+                    }}
+                    className="w-full bg-white/10 border border-white/20 rounded-lg py-3 px-4 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="text-center text-gray-400 text-sm">OR</div>
+
+                {/* File Upload */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Upload Video File
+                  </label>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -419,29 +546,25 @@ export default function StreamingDashboard() {
                     )}
                   </button>
                 </div>
-              ) : (
-                <div>
-                  <input
-                    type="url"
-                    placeholder="Enter video URL or RTMP stream"
-                    value={config.videoSource}
-                    onChange={(e) => {
-                      updateConfig({ 
-                        videoSource: e.target.value,
-                        videoFile: null // Clear video file when URL is entered
-                      });
-                    }}
-                    className="w-full bg-white/10 border border-white/20 rounded-lg py-3 px-4 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
-                  />
-                  {config.videoSource && (
-                    <div className="mt-2 flex items-center space-x-2">
+
+                {/* Current Selection Display */}
+                {(config.selectedVideoId || config.videoSource || config.videoFile) && (
+                  <div className="mt-3 p-3 bg-green-500/20 border border-green-500/30 rounded-lg">
+                    <div className="flex items-center space-x-2">
                       <CheckCircle className="w-4 h-4 text-green-400" />
-                      <span className="text-green-400 text-sm">URL configured</span>
+                      <span className="text-green-400 text-sm font-medium">
+                        {config.selectedVideoId 
+                          ? `Library video selected`
+                          : config.videoFile 
+                          ? `File: ${config.videoFile.name}`
+                          : `URL: ${config.videoSource}`
+                        }
+                      </span>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -467,7 +590,7 @@ export default function StreamingDashboard() {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white">Playlist Settings</h3>
+              <h3 className="text-lg font-semibold text-white">Select Playlist</h3>
               <button
                 onClick={() => setShowPlaylistSettings(false)}
                 className="text-gray-400 hover:text-white"
@@ -479,7 +602,7 @@ export default function StreamingDashboard() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Select Playlist
+                  Available Playlists
                 </label>
                 {isLoadingPlaylists ? (
                   <div className="flex items-center justify-center py-3">
@@ -495,7 +618,8 @@ export default function StreamingDashboard() {
                     <option value="">Select a playlist...</option>
                     {availablePlaylists.map((playlist: any) => (
                       <option key={playlist.id} value={playlist.id}>
-                        {playlist.name} ({playlist.itemCount} items)
+                        {playlist.name} ({playlist.itemCount} tracks)
+                        {playlist.backgroundVideo ? ' ✓' : ' ⚠️'}
                       </option>
                     ))}
                   </select>

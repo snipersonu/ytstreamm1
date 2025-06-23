@@ -12,11 +12,10 @@ export class PlaylistManager extends EventEmitter {
     this.currentItemIndex = 0;
     this.isPlaying = false;
     this.ffmpegProcess = null;
-    this.audioProcess = null;
-    this.videoProcess = null;
     this.shuffleMode = false;
     this.loopMode = true;
     this.playOrder = [];
+    this.backgroundVideo = null; // Single video that loops throughout playlist
   }
 
   async loadPlaylist(playlistId, options = {}) {
@@ -29,13 +28,15 @@ export class PlaylistManager extends EventEmitter {
       }
 
       this.currentPlaylist = playlist;
+      this.backgroundVideo = playlist.backgroundVideo; // Store background video
       this.shuffleMode = options.shuffle || false;
       this.loopMode = options.loop !== false;
       this.currentItemIndex = 0;
 
       this.generatePlayOrder();
       
-      this.logger.info(`Loaded playlist: ${this.currentPlaylist.name} with ${this.currentPlaylist.items.length} items`);
+      this.logger.info(`Loaded playlist: ${this.currentPlaylist.name} with ${this.currentPlaylist.items.length} audio items`);
+      this.logger.info(`Background video: ${this.backgroundVideo ? this.backgroundVideo.name : 'None'}`);
       
       return this.currentPlaylist;
     } catch (error) {
@@ -70,27 +71,34 @@ export class PlaylistManager extends EventEmitter {
       throw new Error('No playlist loaded');
     }
 
+    if (!this.backgroundVideo) {
+      throw new Error('No background video selected for playlist');
+    }
+
     this.isPlaying = true;
     await this.playCurrentItem(youtubeStreamKey, quality, bitrate, fps);
   }
 
   async playCurrentItem(youtubeStreamKey, quality, bitrate, fps) {
-    const currentItem = this.getCurrentItem();
-    if (!currentItem) {
-      this.logger.warn('No current item to play');
+    const currentAudioItem = this.getCurrentItem();
+    if (!currentAudioItem) {
+      this.logger.warn('No current audio item to play');
       return;
     }
 
-    this.logger.info(`Playing playlist item: ${currentItem.name}`);
+    this.logger.info(`Playing audio item: ${currentAudioItem.name} with background video: ${this.backgroundVideo.name}`);
     
     this.emit('itemChanged', {
-      currentItem,
+      currentItem: {
+        ...currentAudioItem,
+        backgroundVideo: this.backgroundVideo
+      },
       index: this.currentItemIndex,
       total: this.currentPlaylist.items.length
     });
 
     try {
-      await this.createLofiStream(currentItem, youtubeStreamKey, quality, bitrate, fps);
+      await this.createLofiStream(currentAudioItem, youtubeStreamKey, quality, bitrate, fps);
     } catch (error) {
       this.logger.error('Error playing current item:', error);
       this.emit('error', error);
@@ -102,46 +110,37 @@ export class PlaylistManager extends EventEmitter {
     }
   }
 
-  async createLofiStream(item, youtubeStreamKey, quality, bitrate, fps) {
+  async createLofiStream(audioItem, youtubeStreamKey, quality, bitrate, fps) {
     const resolution = quality === '1080p' ? '1920x1080' : '1280x720';
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeStreamKey}`;
 
-    // Create complex filter for combining video and audio
-    const videoInput = item.video ? item.video.url : null;
-    const audioInput = item.audio ? item.audio.url : null;
+    // Background video (loops continuously)
+    const videoInput = this.backgroundVideo.url;
+    // Current audio item
+    const audioInput = audioItem.url;
 
-    if (!videoInput && !audioInput) {
-      throw new Error('No video or audio source available');
+    if (!videoInput || !audioInput) {
+      throw new Error('Missing video or audio source');
     }
 
     return new Promise((resolve, reject) => {
       let command = ffmpeg();
 
-      // Add video input
-      if (videoInput) {
-        // Convert relative URL to absolute file path
-        const videoPath = videoInput.startsWith('/uploads/') 
-          ? path.join(process.cwd(), 'server', videoInput)
-          : videoInput;
-        
-        command = command.input(videoPath);
-        if (item.video.loop) {
-          command = command.inputOptions(['-stream_loop', '-1']);
-        }
-      }
+      // Add background video input (loops infinitely)
+      const videoPath = videoInput.startsWith('/uploads/') 
+        ? path.join(process.cwd(), 'server', videoInput)
+        : videoInput;
+      
+      command = command.input(videoPath);
+      command = command.inputOptions(['-stream_loop', '-1']); // Loop video infinitely
 
-      // Add audio input
-      if (audioInput) {
-        // Convert relative URL to absolute file path
-        const audioPath = audioInput.startsWith('/uploads/') 
-          ? path.join(process.cwd(), 'server', audioInput)
-          : audioInput;
-        
-        command = command.input(audioPath);
-        if (item.audio.loop) {
-          command = command.inputOptions(['-stream_loop', '-1']);
-        }
-      }
+      // Add current audio input
+      const audioPath = audioInput.startsWith('/uploads/') 
+        ? path.join(process.cwd(), 'server', audioInput)
+        : audioInput;
+      
+      command = command.input(audioPath);
+      // Don't loop audio - let it play once and then move to next item
 
       // Configure output
       command = command
@@ -153,43 +152,21 @@ export class PlaylistManager extends EventEmitter {
         .audioFrequency(44100)
         .audioBitrate('128k');
 
-      // Set up complex filter for audio mixing if needed
-      if (videoInput && audioInput) {
-        command = command.complexFilter([
-          // Mix video and audio
-          {
-            filter: 'amix',
-            options: {
-              inputs: 2,
-              duration: 'longest',
-              dropout_transition: 0
-            },
-            inputs: ['0:a', '1:a'],
-            outputs: 'mixed_audio'
-          }
-        ]);
-        
-        command = command.outputOptions([
-          '-map', '0:v',  // Video from first input
-          '-map', '[mixed_audio]',  // Mixed audio
-        ]);
-      } else if (videoInput) {
-        command = command.outputOptions(['-map', '0:v', '-map', '0:a']);
-      } else {
-        // Audio only - create a static image or color background
-        command = command
-          .input('color=c=black:s=' + resolution + ':r=' + fps)
-          .inputOptions(['-f', 'lavfi'])
-          .outputOptions([
-            '-map', '0:v',  // Color background
-            '-map', '1:a'   // Audio
-          ]);
-      }
-
-      // Apply volume if specified
-      if (item.audio && item.audio.volume !== 1.0) {
-        command = command.audioFilters(`volume=${item.audio.volume}`);
-      }
+      // Set up complex filter for combining background video with audio
+      command = command.complexFilter([
+        // Take video from background (input 0) and audio from current item (input 1)
+        {
+          filter: 'volume',
+          options: audioItem.volume || 1.0,
+          inputs: '1:a',
+          outputs: 'adjusted_audio'
+        }
+      ]);
+      
+      command = command.outputOptions([
+        '-map', '0:v',  // Video from background video
+        '-map', '[adjusted_audio]',  // Audio from current item
+      ]);
 
       command = command
         .outputOptions([
@@ -216,9 +193,9 @@ export class PlaylistManager extends EventEmitter {
           reject(err);
         })
         .on('end', () => {
-          this.logger.info('Lofi stream item ended');
+          this.logger.info('Audio item finished, moving to next');
           if (this.isPlaying) {
-            // Move to next item
+            // Move to next audio item
             this.nextItem(youtubeStreamKey, quality, bitrate, fps);
           }
         });
@@ -281,14 +258,19 @@ export class PlaylistManager extends EventEmitter {
   }
 
   getStatus() {
+    const currentItem = this.getCurrentItem();
     return {
       isPlaying: this.isPlaying,
-      currentItem: this.getCurrentItem(),
+      currentItem: currentItem ? {
+        ...currentItem,
+        backgroundVideo: this.backgroundVideo
+      } : null,
       currentIndex: this.currentItemIndex,
       totalItems: this.currentPlaylist ? this.currentPlaylist.items.length : 0,
       shuffleMode: this.shuffleMode,
       loopMode: this.loopMode,
-      playlistName: this.currentPlaylist ? this.currentPlaylist.name : null
+      playlistName: this.currentPlaylist ? this.currentPlaylist.name : null,
+      backgroundVideo: this.backgroundVideo
     };
   }
 
