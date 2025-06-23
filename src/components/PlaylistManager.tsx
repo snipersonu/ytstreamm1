@@ -24,6 +24,8 @@ import {
   Image,
   FileVideo,
   FileAudio,
+  Check,
+  Search,
 } from 'lucide-react';
 
 interface MediaItem {
@@ -41,7 +43,7 @@ interface MediaItem {
 interface AudioPlaylistItem {
   id: string;
   name: string;
-  audio: MediaItem;
+  audio: MediaItem | null;
   duration: number;
   order: number;
   volume: number;
@@ -63,6 +65,11 @@ export default function PlaylistManager() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'videos' | 'audios'>('videos');
+  
+  // New state for audio selection modal
+  const [showAudioSelection, setShowAudioSelection] = useState(false);
+  const [currentAudioItemToAssign, setCurrentAudioItemToAssign] = useState<AudioPlaylistItem | null>(null);
+  const [audioSearchTerm, setAudioSearchTerm] = useState('');
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -228,6 +235,24 @@ export default function PlaylistManager() {
     setAudioItems(reorderedItems);
   };
 
+  const openAudioSelection = (item: AudioPlaylistItem) => {
+    setCurrentAudioItemToAssign(item);
+    setShowAudioSelection(true);
+    setAudioSearchTerm('');
+  };
+
+  const selectAudioForItem = (audio: MediaItem) => {
+    if (currentAudioItemToAssign) {
+      updateAudioItem(currentAudioItemToAssign.id, { 
+        audio,
+        name: audio.name,
+        duration: audio.duration || 0
+      });
+      setShowAudioSelection(false);
+      setCurrentAudioItemToAssign(null);
+    }
+  };
+
   const playItem = (item: AudioPlaylistItem) => {
     setCurrentItem(item);
     setIsPlaying(true);
@@ -329,6 +354,11 @@ export default function PlaylistManager() {
   const videoLibrary = mediaLibrary.filter(item => item.type === 'video');
   const audioLibrary = mediaLibrary.filter(item => item.type === 'audio');
 
+  // Filter audio library based on search term
+  const filteredAudioLibrary = audioLibrary.filter(audio =>
+    audio.name.toLowerCase().includes(audioSearchTerm.toLowerCase())
+  );
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -367,7 +397,7 @@ export default function PlaylistManager() {
             className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
           >
             <Plus className="w-4 h-4" />
-            <span>Add Audio</span>
+            <span>Add Audio Track</span>
           </button>
           <button
             onClick={savePlaylist}
@@ -384,9 +414,9 @@ export default function PlaylistManager() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Preview Player */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-3">
           <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
             <h3 className="text-lg font-semibold text-white mb-4">Preview Player</h3>
             
@@ -564,17 +594,13 @@ export default function PlaylistManager() {
                 {audioLibrary.map((media) => (
                   <div
                     key={media.id}
-                    className="bg-white/10 rounded-lg p-3 cursor-pointer hover:bg-white/20 transition-colors"
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData('audio', JSON.stringify(media));
-                    }}
+                    className="bg-white/10 rounded-lg p-3 hover:bg-white/20 transition-colors"
                   >
                     <div className="flex items-center space-x-3">
                       <Music className="w-5 h-5 text-green-400" />
                       <div className="flex-1 min-w-0">
                         <p className="text-white text-sm font-medium truncate">{media.name}</p>
-                        <p className="text-gray-400 text-xs">Drag to playlist</p>
+                        <p className="text-gray-400 text-xs">Available for playlist</p>
                       </div>
                     </div>
                   </div>
@@ -630,7 +656,7 @@ export default function PlaylistManager() {
       <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-xl p-6">
         <h3 className="text-lg font-semibold text-white mb-4">Audio Playlist ({audioItems.length} tracks)</h3>
         
-        <div className="space-y-2">
+        <div className="space-y-3">
           {audioItems.map((item, index) => (
             <div
               key={item.id}
@@ -647,85 +673,99 @@ export default function PlaylistManager() {
                   reorderAudioItems(dragIndex, index);
                   setDraggedItem(null);
                 }
-                
-                // Handle audio drop
-                const audioData = e.dataTransfer.getData('audio');
-                if (audioData) {
-                  const audio: MediaItem = JSON.parse(audioData);
-                  updateAudioItem(item.id, { 
-                    audio,
-                    name: audio.name,
-                    duration: audio.duration || 0
-                  });
-                }
               }}
             >
               <div className="flex items-center space-x-4">
                 <GripVertical className="w-5 h-5 text-gray-400 cursor-move" />
                 
                 <div className="flex-1">
-                  <div className="flex items-center space-x-4 mb-2">
-                    <span className="text-white font-medium">{item.order + 1}.</span>
+                  <div className="flex items-center space-x-4 mb-3">
+                    <span className="text-white font-medium text-lg">{item.order + 1}.</span>
                     <input
                       type="text"
                       value={item.name}
                       onChange={(e) => updateAudioItem(item.id, { name: e.target.value })}
-                      className="bg-transparent text-white font-medium border-none outline-none flex-1"
+                      className="bg-transparent text-white font-medium border-none outline-none flex-1 text-lg"
+                      placeholder="Track name"
                     />
                   </div>
                   
-                  {/* Audio Slot */}
-                  <div className={`border-2 border-dashed rounded-lg p-3 ${
-                    item.audio ? 'border-green-500 bg-green-500/10' : 'border-gray-500'
+                  {/* Audio Assignment */}
+                  <div className={`border-2 rounded-lg p-4 transition-all ${
+                    item.audio 
+                      ? 'border-green-500 bg-green-500/10' 
+                      : 'border-dashed border-gray-500 hover:border-gray-400'
                   }`}>
                     {item.audio ? (
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <Music className="w-4 h-4 text-green-400" />
-                          <span className="text-white text-sm truncate">{item.audio.name}</span>
+                        <div className="flex items-center space-x-3">
+                          <Music className="w-5 h-5 text-green-400" />
+                          <div>
+                            <p className="text-white font-medium">{item.audio.name}</p>
+                            <p className="text-gray-400 text-sm">Audio track assigned</p>
+                          </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <Volume2 className="w-3 h-3 text-gray-400" />
-                          <input
-                            type="range"
-                            min="0"
-                            max="1"
-                            step="0.1"
-                            value={item.volume}
-                            onChange={(e) => updateAudioItem(item.id, { volume: parseFloat(e.target.value) })}
-                            className="w-16"
-                          />
+                        <div className="flex items-center space-x-3">
+                          <div className="flex items-center space-x-2">
+                            <Volume2 className="w-4 h-4 text-gray-400" />
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.1"
+                              value={item.volume}
+                              onChange={(e) => updateAudioItem(item.id, { volume: parseFloat(e.target.value) })}
+                              className="w-20"
+                            />
+                            <span className="text-gray-400 text-sm w-8">{Math.round(item.volume * 100)}%</span>
+                          </div>
+                          <button
+                            onClick={() => openAudioSelection(item)}
+                            className="text-blue-400 hover:text-blue-300 p-1 rounded transition-colors"
+                            title="Change audio"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => updateAudioItem(item.id, { audio: null })}
-                            className="text-red-400 hover:text-red-300"
+                            className="text-red-400 hover:text-red-300 p-1 rounded transition-colors"
+                            title="Remove audio"
                           >
-                            <X className="w-3 h-3" />
+                            <X className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
                     ) : (
                       <div className="text-center">
-                        <Music className="w-6 h-6 text-gray-400 mx-auto mb-1" />
-                        <p className="text-gray-400 text-xs">Drop audio here</p>
+                        <Music className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                        <p className="text-gray-400 mb-3">No audio assigned</p>
+                        <button
+                          onClick={() => openAudioSelection(item)}
+                          className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                        >
+                          Select Audio
+                        </button>
                       </div>
                     )}
                   </div>
                 </div>
                 
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-col items-center space-y-2">
                   <button
                     onClick={() => playItem(item)}
                     disabled={!item.audio || !backgroundVideo}
-                    className="p-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+                    className="p-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+                    title="Preview track"
                   >
-                    <Play className="w-4 h-4 text-white" />
+                    <Play className="w-5 h-5 text-white" />
                   </button>
                   
                   <button
                     onClick={() => deleteAudioItem(item.id)}
-                    className="p-2 rounded-lg bg-red-600 hover:bg-red-700 transition-colors"
+                    className="p-3 rounded-lg bg-red-600 hover:bg-red-700 transition-colors"
+                    title="Delete track"
                   >
-                    <Trash2 className="w-4 h-4 text-white" />
+                    <Trash2 className="w-5 h-5 text-white" />
                   </button>
                 </div>
               </div>
@@ -737,10 +777,91 @@ export default function PlaylistManager() {
               <Plus className="w-16 h-16 text-gray-500 mx-auto mb-4" />
               <p className="text-gray-400 text-lg">No audio tracks</p>
               <p className="text-gray-500">Add audio tracks to create your lofi playlist</p>
+              <button
+                onClick={createAudioItem}
+                className="mt-4 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
+              >
+                Add First Track
+              </button>
             </div>
           )}
         </div>
       </div>
+
+      {/* Audio Selection Modal */}
+      {showAudioSelection && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-white/10 rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Select Audio Track</h3>
+              <button
+                onClick={() => {
+                  setShowAudioSelection(false);
+                  setCurrentAudioItemToAssign(null);
+                }}
+                className="text-gray-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {/* Search */}
+            <div className="mb-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search audio files..."
+                  value={audioSearchTerm}
+                  onChange={(e) => setAudioSearchTerm(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-lg py-2 pl-10 pr-4 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+            
+            {/* Audio List */}
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {filteredAudioLibrary.length > 0 ? (
+                filteredAudioLibrary.map((audio) => (
+                  <div
+                    key={audio.id}
+                    className="bg-white/10 rounded-lg p-4 hover:bg-white/20 transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <Music className="w-5 h-5 text-green-400" />
+                        <div>
+                          <p className="text-white font-medium">{audio.name}</p>
+                          <p className="text-gray-400 text-sm">
+                            {audio.duration ? `${Math.round(audio.duration)}s` : 'Duration unknown'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => selectAudioForItem(audio)}
+                        className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2"
+                      >
+                        <Check className="w-4 h-4" />
+                        <span>Select</span>
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8">
+                  <Music className="w-12 h-12 text-gray-500 mx-auto mb-2" />
+                  <p className="text-gray-400">
+                    {audioSearchTerm ? 'No audio files match your search' : 'No audio files available'}
+                  </p>
+                  <p className="text-gray-500 text-sm">
+                    {audioSearchTerm ? 'Try a different search term' : 'Upload audio files to get started'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Media Upload Modal */}
       {showMediaUpload && (
